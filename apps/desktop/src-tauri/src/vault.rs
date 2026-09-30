@@ -368,9 +368,40 @@ fn rename_folder(root: &Path, from: &str, to: &str) -> Result<(), String> {
         return Err("a folder cannot be renamed into itself".into());
     }
     if fs::symlink_metadata(&destination).is_ok() {
-        return Err(format!("a folder already exists at {to}"));
+        let source = fs::canonicalize(&src).map_err(|e| e.to_string())?;
+        let same_directory =
+            fs::canonicalize(&destination).is_ok_and(|existing| existing == source);
+        if !same_directory {
+            return Err(format!("a folder already exists at {to}"));
+        }
+        let parent = src.parent().ok_or("invalid source folder")?;
+        let temporary = case_rename_temporary(parent)?;
+        fs::rename(&src, &temporary).map_err(|e| e.to_string())?;
+        if let Err(error) = fs::rename(&temporary, &destination) {
+            return match fs::rename(&temporary, &src) {
+                Ok(()) => Err(error.to_string()),
+                Err(restore) => Err(format!(
+                    "{error}; failed to restore original folder name: {restore}"
+                )),
+            };
+        }
+        return Ok(());
     }
     fs::rename(src, destination).map_err(|e| e.to_string())
+}
+
+fn case_rename_temporary(parent: &Path) -> Result<PathBuf, String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    for attempt in 0..100 {
+        let path = parent.join(format!(".companion-rename-{stamp}-{attempt}"));
+        if fs::symlink_metadata(&path).is_err() {
+            return Ok(path);
+        }
+    }
+    Err("could not allocate a temporary folder name".into())
 }
 
 /// Move a whole folder tree into the vault's reversible trash area.
@@ -391,9 +422,22 @@ fn trash_folder(root: &Path, rel: &str) -> Result<(), String> {
     if !trash.starts_with(&vault_root) {
         return Err("trash directory is outside the vault".into());
     }
-    let destination = trash.join(folder.file_name().ok_or("invalid folder name")?);
+    let name = folder.file_name().ok_or("invalid folder name")?;
+    let mut destination = trash.join(name);
     if fs::symlink_metadata(&destination).is_ok() {
-        return Err(format!("a folder already exists in the trash: {rel}"));
+        let name = name.to_string_lossy();
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let mut suffix = stamp;
+        loop {
+            destination = trash.join(format!("{name}-{suffix}"));
+            if fs::symlink_metadata(&destination).is_err() {
+                break;
+            }
+            suffix += 1;
+        }
     }
     fs::rename(folder, destination).map_err(|e| e.to_string())
 }
@@ -479,25 +523,67 @@ mod tests {
         dir
     }
     #[test]
-    fn rename_folder_preserves_nested_files_and_rejects_invalid_destinations() {
-        let root = tmp("rename-folder");
+    fn trash_folder_preserves_same_basename_directories_with_suffixes() {
+        let root = tmp("trash-folder-collision");
         fs::create_dir_all(root.join("Projects/Notes")).unwrap();
         fs::write(root.join("Projects/Notes/a.md"), "one").unwrap();
-        rename_folder(&root, "Projects", "Archive").unwrap();
+        trash_folder(&root, "Projects").unwrap();
         assert_eq!(
-            fs::read_to_string(root.join("Archive/Notes/a.md")).unwrap(),
+            fs::read_to_string(root.join(".trash/Projects/Notes/a.md")).unwrap(),
             "one"
         );
-        assert!(rename_folder(&root, "Archive", "Archive/Nested").is_err());
-        assert!(rename_folder(&root, "", "Renamed").is_err());
-        assert!(rename_folder(&root, "Archive", "../outside").is_err());
-        fs::create_dir_all(root.join("Existing")).unwrap();
-        assert!(rename_folder(&root, "Archive", "Existing").is_err());
-        assert!(root.join("Archive/Notes/a.md").exists());
+
+        fs::create_dir_all(root.join("Projects/Notes")).unwrap();
+        fs::write(root.join("Projects/Notes/a.md"), "two").unwrap();
+        trash_folder(&root, "Projects").unwrap();
+        let trashed: Vec<_> = fs::read_dir(root.join(".trash"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.is_dir())
+            .collect();
+        assert_eq!(trashed.len(), 2);
+        assert_eq!(
+            fs::read_to_string(root.join(".trash/Projects/Notes/a.md")).unwrap(),
+            "one"
+        );
+        let suffixed = trashed
+            .iter()
+            .find(|path| path.file_name().unwrap() != "Projects")
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(suffixed.join("Notes/a.md")).unwrap(),
+            "two"
+        );
+        assert!(trash_folder(&root, "").is_err());
+        assert!(trash_folder(&root, "../outside").is_err());
     }
 
     #[test]
-    fn trash_folder_preserves_tree_and_rejects_root_escape_and_collision() {
+    fn rename_folder_allows_case_only_change_when_filesystem_aliases_case() {
+        let root = tmp("rename-folder-case");
+        fs::create_dir_all(root.join("Projects")).unwrap();
+        fs::write(root.join("Projects/a.md"), "one").unwrap();
+        let case_alias = fs::create_dir(root.join("projects")).is_err();
+
+        if case_alias {
+            rename_folder(&root, "Projects", "projects").unwrap();
+            let names: Vec<_> = fs::read_dir(&root)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            assert!(names.iter().any(|name| name == "projects"));
+            assert!(!names.iter().any(|name| name == "Projects"));
+            assert_eq!(
+                fs::read_to_string(root.join("projects/a.md")).unwrap(),
+                "one"
+            );
+        } else {
+            assert!(rename_folder(&root, "Projects", "projects").is_err());
+            assert!(root.join("Projects/a.md").exists());
+        }
+    }
+    #[test]
+    fn trash_folder_preserves_tree_and_rejects_root_escape() {
         let root = tmp("trash-folder");
         fs::create_dir_all(root.join("Projects/Notes")).unwrap();
         fs::write(root.join("Projects/Notes/a.md"), "one").unwrap();
@@ -506,12 +592,8 @@ mod tests {
             fs::read_to_string(root.join(".trash/Projects/Notes/a.md")).unwrap(),
             "one"
         );
-        fs::create_dir_all(root.join("Projects")).unwrap();
-        fs::write(root.join("Projects/b.md"), "two").unwrap();
-        assert!(trash_folder(&root, "Projects").is_err());
         assert!(trash_folder(&root, "").is_err());
         assert!(trash_folder(&root, "../outside").is_err());
-        assert!(root.join("Projects/b.md").exists());
     }
 
     #[test]

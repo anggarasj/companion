@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Vault, VaultNote } from '@meetcc/vault'
@@ -7,6 +7,7 @@ import { ToastProvider } from '@meetcc/ui'
 import { t } from '@meetcc/shared/i18n'
 import { MeetingMeta } from './MeetingMeta'
 import { loadAiSettings } from './aiSettings'
+import type { AskResult } from '@meetcc/shared/types'
 import { askMeeting } from '@meetcc/ai'
 
 vi.mock('./aiSettings', () => ({ loadAiSettings: vi.fn(async () => ({ provider: 'openai' })) }))
@@ -25,6 +26,14 @@ vi.mock('@meetcc/ai', () => ({
   resolveConfig: vi.fn((settings) => settings),
   validateSettings: vi.fn(() => null),
 }))
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
 
 const lines = [
   { speaker: 'Rani', text: 'Kita lanjut minggu depan.', time: '2026-09-28T10:02:00Z' },
@@ -73,5 +82,60 @@ describe('desktop meeting AI', () => {
       [],
       'Apa keputusan rapat?',
     )
+  })
+
+  it('ignores a transcript read that finishes after switching meetings', async () => {
+    const user = userEvent.setup()
+    const pendingRead = deferred<string>()
+    vi.mocked(vault.io.readFile).mockReturnValueOnce(pendingRead.promise)
+    const { rerender } = render(
+      <ToastProvider>
+        <MeetingMeta note={note} vault={vault} />
+      </ToastProvider>,
+    )
+
+    await user.click(screen.getByRole('button', { name: t('desktop.meeting.showTranscript') }))
+    rerender(
+      <ToastProvider>
+        <MeetingMeta note={{ ...note, id: 'note-b', sessionKey: 'other#2026-09-28T10:00' }} vault={vault} />
+      </ToastProvider>,
+    )
+    await act(async () => pendingRead.resolve(JSON.stringify({ ...lines[0], text: 'A-only transcript' })))
+
+    expect(screen.queryByText('A-only transcript')).toBeNull()
+    expect(screen.queryByText('Kita lanjut minggu depan.')).toBeNull()
+  })
+
+  it('ignores an AI answer that finishes after switching meetings', async () => {
+    const user = userEvent.setup()
+    const pendingAnswer = deferred<AskResult>()
+    vi.mocked(askMeeting).mockReturnValueOnce(pendingAnswer.promise)
+    const { rerender } = render(
+      <ToastProvider>
+        <MeetingMeta note={note} vault={vault} />
+      </ToastProvider>,
+    )
+
+    await user.click(screen.getByRole('button', { name: t('desktop.meeting.showTranscript') }))
+    await user.type(await screen.findByRole('textbox', { name: t('desktop.meeting.askQuestion') }), 'Question for A')
+    await user.click(screen.getByRole('button', { name: t('desktop.meeting.ask') }))
+    rerender(
+      <ToastProvider>
+        <MeetingMeta note={{ ...note, id: 'note-b', sessionKey: 'other#2026-09-28T10:00' }} vault={vault} />
+      </ToastProvider>,
+    )
+    await act(async () => pendingAnswer.resolve({
+      answer: 'A-only answer',
+      answerability: 'explicit',
+      intent: 'recall',
+      confidence: 0.9,
+      evidence: [],
+      missing: [],
+      followUps: [],
+    }))
+
+    expect(screen.queryByText('A-only answer')).toBeNull()
+    expect(screen.queryByText('Question for A')).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 })
