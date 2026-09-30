@@ -477,6 +477,56 @@ export default function App() {
       setNamingFolder(null)
     }
   }
+  async function renameFolder(folder: string, name: string) {
+    if (!vault) return
+    const trimmed = name.trim()
+    if (!trimmed) return
+    const safe = trimmed.replace(/[/\\]/g, '-')
+    const parent = folder.includes('/') ? folder.slice(0, folder.lastIndexOf('/')) : ''
+    const renamed = parent ? `${parent}/${safe}` : safe
+    if (renamed === folder) return
+    try {
+      await invoke('rename_vault_folder', { from: folder, to: renamed })
+      if (selected && (selected === folder || selected.startsWith(`${folder}/`))) {
+        setSelected(`${renamed}${selected.slice(folder.length)}`)
+      }
+      if (target && (target === folder || target.startsWith(`${folder}/`))) {
+        setTarget(`${renamed}${target.slice(folder.length)}`)
+      }
+      await refresh(vault)
+      toast('success', t('desktop.vault.folderRenamed', { name: renamed }))
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
+  function requestTrashFolder(folder: string) {
+    if (!vault) return
+    const containsSelected = selected === folder || selected?.startsWith(`${folder}/`)
+    setConfirm({
+      message: `${t('desktop.vault.confirmTrashFolder', { folder })}${
+        containsSelected && dirty ? ` ${t('desktop.vault.confirmTrashDirty')}` : ''
+      }`,
+      label: t('desktop.vault.trashFolderAction'),
+      run: async () => {
+        guard(async () => {
+          try {
+            await invoke('trash_vault_folder', { rel: folder })
+            if (selected === folder || selected?.startsWith(`${folder}/`)) {
+              setNote(null)
+              setSelected(null)
+              setDirty(false)
+            }
+            await refresh(vault)
+            toast('info', t('desktop.vault.folderTrashed', { name: folder }))
+          } catch (e) {
+            setError(String(e))
+          }
+        })
+      },
+    })
+  }
+
 
   const moveNote = (folder: string) => (selected ? moveNoteFrom(selected, folder) : undefined)
 
@@ -882,6 +932,8 @@ export default function App() {
                     onOpen={(rel) => guard(() => open(rel))}
                     onMove={(rel, folder) => void moveNoteFrom(rel, folder)}
                     onAddFolder={(folder) => setNamingFolder(folder)}
+                    onRenameFolder={(folder, name) => guard(() => renameFolder(folder, name))}
+                    onTrashFolder={requestTrashFolder}
                   />
                 </>
               ) : (
