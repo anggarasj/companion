@@ -375,7 +375,7 @@ fn rename_folder(root: &Path, from: &str, to: &str) -> Result<(), String> {
             return Err(format!("a folder already exists at {to}"));
         }
         let parent = src.parent().ok_or("invalid source folder")?;
-        let temporary = case_rename_temporary(parent)?;
+        let temporary = unique_timestamped_path(parent, ".companion-rename", "")?;
         fs::rename(&src, &temporary).map_err(|e| e.to_string())?;
         if let Err(error) = fs::rename(&temporary, &destination) {
             return match fs::rename(&temporary, &src) {
@@ -388,20 +388,6 @@ fn rename_folder(root: &Path, from: &str, to: &str) -> Result<(), String> {
         return Ok(());
     }
     fs::rename(src, destination).map_err(|e| e.to_string())
-}
-
-fn case_rename_temporary(parent: &Path) -> Result<PathBuf, String> {
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    for attempt in 0..100 {
-        let path = parent.join(format!(".companion-rename-{stamp}-{attempt}"));
-        if fs::symlink_metadata(&path).is_err() {
-            return Ok(path);
-        }
-    }
-    Err("could not allocate a temporary folder name".into())
 }
 
 /// Move a whole folder tree into the vault's reversible trash area.
@@ -426,20 +412,28 @@ fn trash_folder(root: &Path, rel: &str) -> Result<(), String> {
     let mut destination = trash.join(name);
     if fs::symlink_metadata(&destination).is_ok() {
         let name = name.to_string_lossy();
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0);
-        let mut suffix = stamp;
-        loop {
-            destination = trash.join(format!("{name}-{suffix}"));
-            if fs::symlink_metadata(&destination).is_err() {
-                break;
-            }
-            suffix += 1;
-        }
+        destination = unique_timestamped_path(&trash, &name, "")?;
     }
     fs::rename(folder, destination).map_err(|e| e.to_string())
+}
+
+fn unique_timestamped_path(
+    directory: &Path,
+    stem: &str,
+    extension: &str,
+) -> Result<PathBuf, String> {
+    let first_suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    for attempt in 0u128..100 {
+        let suffix = first_suffix.saturating_add(attempt);
+        let path = directory.join(format!("{stem}-{suffix}{extension}"));
+        if fs::symlink_metadata(&path).is_err() {
+            return Ok(path);
+        }
+    }
+    Err("could not allocate a unique timestamped path".into())
 }
 
 /// Create an empty folder in the vault.
@@ -498,13 +492,9 @@ pub fn trash_vault_file(state: State<'_, VaultState>, rel: String) -> Result<(),
     // Notes from different days share a basename; landing on one already in the
     // trash would destroy it, which is what the trash exists to prevent.
     let mut dest = trash_dir.join(name);
-    if dest.exists() {
-        let stem = name.trim_end_matches(".md");
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0);
-        dest = trash_dir.join(format!("{stem}-{stamp}.md"));
+    if fs::symlink_metadata(&dest).is_ok() {
+        let stem = name.strip_suffix(".md").unwrap_or(name);
+        dest = unique_timestamped_path(&trash_dir, stem, ".md")?;
     }
     fs::rename(&from, dest).map_err(|e| e.to_string())?;
     Ok(())
