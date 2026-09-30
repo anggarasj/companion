@@ -15,7 +15,7 @@ import { saveTarget, settleSaved } from './saveTarget'
 import { loadAutosave } from './editorPrefs'
 import { drainSpool } from './spool'
 import { buildTree, folderPaths, withEmptyFolders } from './tree'
-import { hideCopiedOriginals, inboxSearchResults } from './sidebarResults'
+import { hideCopiedOriginals, inboxSearchResults, isIncomingMeeting } from './sidebarResults'
 import { loadThemePref, type ThemePref } from './theme'
 import { NoteEditor } from './NoteEditor'
 import UpdateBanner from './UpdateBanner'
@@ -811,7 +811,7 @@ export default function App() {
   const incoming = useMemo(
     () =>
       notes
-        .filter((n) => n.platform && n.platform !== 'manual')
+        .filter(isIncomingMeeting)
         .sort((a, b) => (b.startedAt ?? b.updatedAt).localeCompare(a.startedAt ?? a.updatedAt)),
     [notes],
   )
@@ -1070,7 +1070,7 @@ export default function App() {
                   setDirty(true)
                 }}
               />
-              {note.platform && note.platform !== 'manual' && (
+              {isIncomingMeeting(note) && (
                 <MeetingMeta note={note} vault={vault} />
               )}
               <TicketFields note={note} onChange={(patch) => { setNote({ ...note, ...patch }); setDirty(true) }} />
