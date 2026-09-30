@@ -78,6 +78,9 @@ Thanks to everyone who contributed to this release:
 * **extension:** restore summary regeneration and exports; deliver summaries after transcript-only transfers
 * **extension:** reset timeline scope when its meeting or analysis changes
 * **extension:** report document generation success only after output is loaded
+* **desktop:** keep generated documents out of Incoming meetings and reuse collision-safe trash names
+* **extension:** preserve timeline choices through live MoM refreshes and keep summary exports resilient
+* **extension:** version desktop summary delivery and avoid replaying legacy summaries on upgrade
 
 ## [1.15.0](https://github.com/suiflex/companion/compare/v1.14.0...v1.15.0) (2026-09-23)
 
