@@ -72,7 +72,11 @@ Thanks to everyone who contributed to this release:
 
 ### Bug Fixes
 
-* **desktop:** launch a headless export host and migrate old registrations
+* **desktop:** handle native messaging in the app executable without rewriting existing registrations
+* **desktop:** retain same-name folders in trash and allow case-only renames
+* **desktop:** ignore transcript reads and AI answers from a meeting after switching notes
+* **extension:** restore summary regeneration and exports; deliver summaries after transcript-only transfers
+* **extension:** reset timeline scope when its meeting or analysis changes
 * **extension:** report document generation success only after output is loaded
 
 ## [1.15.0](https://github.com/suiflex/companion/compare/v1.14.0...v1.15.0) (2026-09-23)
