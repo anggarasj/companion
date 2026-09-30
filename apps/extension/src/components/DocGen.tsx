@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { t, formatDateTime } from '@meetcc/shared/i18n'
 import { DOC_META } from '@meetcc/ai'
 import { toObsidianDocument } from '@meetcc/exporters/obsidian'
@@ -23,6 +23,7 @@ import { db } from '../lib/db'
 import { Button, RadioGroup, useToast } from '@meetcc/ui'
 
 const TYPES: DocType[] = ['notulen', 'brd', 'prd', 'recap']
+const EMPTY_TIMELINE: Analysis['timeline'] = []
 type DocumentExport = 'markdown' | 'obsidian' | 'pdf' | 'desktop'
 
 function downloadBlob(name: string, blob: Blob) {
@@ -48,38 +49,59 @@ export function DocumentOutputs({ meeting, analysis }: { meeting: Meeting; analy
   // P2.1 — an optional user template steers the document's structure.
   const [templates, setTemplates] = useState<{ id: string; name: string }[]>([])
   const [templateId, setTemplateId] = useState('')
-  const timeline = analysis?.timeline ?? []
-  const timelineKey = `${meeting.id}:${JSON.stringify(timeline)}`
-  const [timelineSelection, setTimelineSelection] = useState<{
-    key: string
-    indices: Set<number>
-  }>(() => ({
-    key: timelineKey,
-    indices: new Set(timeline.map((_, index) => index)),
-  }))
-  const selectedTimeline =
-    timelineSelection.key === timelineKey
-      ? timelineSelection.indices
-      : new Set(timeline.map((_, index) => index))
-
-  useEffect(() => {
-    setTimelineSelection({
-      key: timelineKey,
-      indices: new Set(Array.from({ length: timeline.length }, (_, index) => index)),
+  const timeline = analysis?.timeline ?? EMPTY_TIMELINE
+  const timelineIds = useMemo(() => {
+    const occurrences = new Map<string, number>()
+    return timeline.map((item) => {
+      const identity = item.time ? `time:${item.time}` : `topic:${item.topic}`
+      const occurrence = occurrences.get(identity) ?? 0
+      occurrences.set(identity, occurrence + 1)
+      return `${identity}\u0000${occurrence}`
     })
-  }, [timelineKey, timeline.length])
+  }, [timeline])
+  const [timelineSelection, setTimelineSelection] = useState<{
+    meetingId: string
+    selected: Set<string>
+    seen: Set<string>
+  }>(() => ({
+    meetingId: meeting.id,
+    selected: new Set(timelineIds),
+    seen: new Set(timelineIds),
+  }))
+  const sameMeeting = timelineSelection.meetingId === meeting.id
+  const selectedTimeline = useMemo(
+    () =>
+      new Set(
+        timelineIds.flatMap((id, index) =>
+          !sameMeeting ||
+          !timelineSelection.seen.has(id) ||
+          timelineSelection.selected.has(id)
+            ? [index]
+            : [],
+        ),
+      ),
+    [sameMeeting, timelineIds, timelineSelection],
+  )
 
   const toggleTimeline = (index: number, checked: boolean): void => {
     setTimelineSelection((selection) => {
-      const selected =
-        selection.key === timelineKey
-          ? selection.indices
-          : new Set(timeline.map((_, itemIndex) => itemIndex))
-      const next = new Set(selected)
-      if (checked) next.add(index)
-      else next.delete(index)
-      if (timeline.length && !next.size) return { key: timelineKey, indices: selected }
-      return { key: timelineKey, indices: next }
+      const selected = selection.meetingId === meeting.id
+        ? new Set(selection.selected)
+        : new Set(timelineIds)
+      const seen = selection.meetingId === meeting.id
+        ? new Set(selection.seen)
+        : new Set(timelineIds)
+      for (const id of timelineIds) {
+        if (!seen.has(id)) selected.add(id)
+        seen.add(id)
+      }
+      const id = timelineIds[index]
+      if (checked) selected.add(id)
+      else selected.delete(id)
+      if (timeline.length && !timelineIds.some((currentId) => selected.has(currentId))) {
+        return selection
+      }
+      return { meetingId: meeting.id, selected, seen }
     })
   }
 

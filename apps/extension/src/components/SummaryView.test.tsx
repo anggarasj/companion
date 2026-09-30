@@ -7,7 +7,7 @@ import { t } from '@meetcc/shared/i18n'
 import { ToastProvider } from '@meetcc/ui'
 import { toMarkdown } from '@meetcc/exporters/markdown'
 import { toPdf } from '@meetcc/exporters/pdf'
-import { toObsidian } from '@meetcc/exporters/obsidian'
+import { toObsidian, obsidianPath } from '@meetcc/exporters/obsidian'
 import { SummaryView } from './SummaryView'
 import { renderPng } from '../lib/mermaid'
 
@@ -63,8 +63,13 @@ const record: AnalysisRecord = {
 
 afterEach(() => {
   cleanup()
-  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
   vi.clearAllMocks()
+  vi.mocked(renderPng).mockReset().mockImplementation(async () => ({
+    dataUrl: 'data:image/png;base64,diagram',
+    wPx: 320,
+    hPx: 200,
+  }))
 })
 
 describe('summary exports', () => {
@@ -96,7 +101,7 @@ describe('summary exports', () => {
       </ToastProvider>,
     )
 
-    await user.click(screen.getByRole('button', { name: t('ext.summary.restart') }))
+    await user.click(screen.getByRole('button', { name: t('ext.summary.regenerateMom') }))
 
     expect(sendMessage).toHaveBeenCalledWith({
       type: 'regenerate',
@@ -128,6 +133,95 @@ describe('summary exports', () => {
       null,
     )
   })
+  it('skips invalid diagrams and continues rendering the PDF sequentially', async () => {
+    const renderPngMock = vi.mocked(renderPng)
+    renderPngMock.mockImplementation(async (source: string) => {
+      if (source === 'bad diagram') throw new Error('invalid mermaid')
+      return { dataUrl: 'data:image/png;base64,valid', wPx: 320, hPx: 200 }
+    })
+    const twoDiagrams: Analysis = {
+      ...analysis,
+      diagrams: [
+        { title: 'Invalid flow', type: 'flowchart', mermaid: 'bad diagram' },
+        { title: 'Valid flow', type: 'flowchart', mermaid: 'valid diagram' },
+      ],
+    }
+    const twoDiagramRecord: AnalysisRecord = { ...record, analysis: twoDiagrams }
+    vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn() } })
+    vi.stubGlobal('URL', { ...URL, createObjectURL: vi.fn(() => 'blob:summary-pdf'), revokeObjectURL: vi.fn() })
+    const user = userEvent.setup()
+    render(<ToastProvider><SummaryView meeting={meeting} record={twoDiagramRecord} live={false} /></ToastProvider>)
+
+    await user.click(screen.getByRole('button', { name: t('ext.docs.pdfExport') }))
+
+    await waitFor(() => expect(toPdf).toHaveBeenCalled())
+    expect(renderPngMock).toHaveBeenNthCalledWith(1, 'bad diagram')
+    expect(renderPngMock).toHaveBeenNthCalledWith(2, 'valid diagram')
+    expect(toPdf).toHaveBeenCalledWith(
+      meeting,
+      twoDiagrams,
+      [{ title: 'Valid flow', dataUrl: 'data:image/png;base64,valid', wPx: 320, hPx: 200 }],
+      null,
+    )
+  })
+
+  it('downloads an Obsidian summary using only the note basename', async () => {
+    let filename = ''
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      filename = this.download
+    })
+    vi.mocked(obsidianPath).mockReturnValue('Meetings/summary.md')
+    vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn() } })
+    vi.stubGlobal('URL', { ...URL, createObjectURL: vi.fn(() => 'blob:summary'), revokeObjectURL: vi.fn() })
+    const user = userEvent.setup()
+    render(<ToastProvider><SummaryView meeting={meeting} record={record} live={false} /></ToastProvider>)
+
+    await user.click(screen.getByRole('button', { name: t('ext.docs.obsidianExport') }))
+
+    expect(filename).toBe('summary.md')
+    expect(click).toHaveBeenCalled()
+    expect(obsidianPath).toHaveBeenCalledWith(meeting)
+  })
+
+  it('shows localized connection guidance for a missing Desktop host', async () => {
+    const sendMessage = vi.fn(async () => ({ ok: false, error: 'Specified native messaging host not found.' }))
+    vi.stubGlobal('chrome', { runtime: { sendMessage } })
+    const user = userEvent.setup()
+    render(<ToastProvider><SummaryView meeting={meeting} record={record} live={false} /></ToastProvider>)
+
+    await user.click(screen.getByRole('button', {
+      name: t('ext.docs.desktopExportDocument', { label: t('ext.summary.label') }),
+    }))
+
+    expect(await screen.findByText(t('ext.summary.desktopNotConnected'))).toBeTruthy()
+  })
+
+  it('locks Desktop and PDF exports while a Desktop delivery is in flight', async () => {
+    let resolveDelivery!: (value: { ok: boolean }) => void
+    const sendMessage = vi.fn(() => new Promise<{ ok: boolean }>((resolve) => { resolveDelivery = resolve }))
+    vi.stubGlobal('chrome', { runtime: { sendMessage } })
+    const user = userEvent.setup()
+    render(<ToastProvider><SummaryView meeting={meeting} record={record} live={false} /></ToastProvider>)
+    const desktopButton = screen.getByRole('button', {
+      name: t('ext.docs.desktopExportDocument', { label: t('ext.summary.label') }),
+    })
+    const pdfButton = screen.getByRole('button', { name: t('ext.docs.pdfExport') })
+
+    await user.click(desktopButton)
+
+    expect(desktopButton.hasAttribute('disabled')).toBe(true)
+    expect(pdfButton.hasAttribute('disabled')).toBe(true)
+    expect(toPdf).not.toHaveBeenCalled()
+    resolveDelivery({ ok: true })
+    await waitFor(() => expect(desktopButton.hasAttribute('disabled')).toBe(false))
+  })
+
+  it('uses the live MoM refresh label for a completed summary', () => {
+    vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn() } })
+    render(<ToastProvider><SummaryView meeting={meeting} record={record} live /></ToastProvider>)
+
+    expect(screen.getByRole('button', { name: t('ext.summary.regenerateMom') })).toBeTruthy()
+  })
 
   it('sends the summary to Desktop through the summary delivery action', async () => {
     const sendMessage = vi.fn(async () => ({ ok: true }))
@@ -141,7 +235,7 @@ describe('summary exports', () => {
 
     await user.click(
       screen.getByRole('button', {
-        name: t('ext.docs.desktopExportDocument', { label: 'summary' }),
+        name: t('ext.docs.desktopExportDocument', { label: t('ext.summary.label') }),
       }),
     )
 

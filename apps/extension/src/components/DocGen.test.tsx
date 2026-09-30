@@ -110,6 +110,40 @@ describe('Notulen timeline scope', () => {
       generatedAt: '2026-09-29T00:00:00.000Z',
     })
   })
+  it('preserves deselections across timeline updates and selects added topics', async () => {
+    const user = userEvent.setup()
+    const view = render(
+      <ToastProvider>
+        <DocumentOutputs meeting={meeting} analysis={analysis} />
+      </ToastProvider>,
+    )
+    await user.click(screen.getByRole('checkbox', { name: /00:05 Vendor/ }))
+
+    const refreshedAnalysis = {
+      ...analysis,
+      timeline: [
+        { time: '00:02', topic: 'Updated budget' },
+        { time: '00:05', topic: 'Updated vendor' },
+        { time: '00:08', topic: 'New risk' },
+      ],
+    }
+    view.rerender(
+      <ToastProvider>
+        <DocumentOutputs meeting={meeting} analysis={refreshedAnalysis} />
+      </ToastProvider>,
+    )
+
+    expect(
+      (screen.getByRole('checkbox', { name: /00:02 Updated budget/ }) as HTMLInputElement).checked,
+    ).toBe(true)
+    expect(
+      (screen.getByRole('checkbox', { name: /00:05 Updated vendor/ }) as HTMLInputElement).checked,
+    ).toBe(false)
+    expect(
+      (screen.getByRole('checkbox', { name: /00:08 New risk/ }) as HTMLInputElement).checked,
+    ).toBe(true)
+  })
+
   it('resets scope when the meeting and timeline change after mount', async () => {
     const sendMessage = vi.fn(async () => ({ ok: true, content: '# New document' }))
     vi.stubGlobal('chrome', { runtime: { sendMessage } })
