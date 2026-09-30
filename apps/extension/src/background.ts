@@ -27,8 +27,15 @@ import { obsidianVault } from '@meetcc/exporters/obsidian';
 import { loadSettingsForAI } from './lib/aiSettings';
 import { makeZip } from './lib/zip';
 import { toBridgeBatch, toDocumentBridgeBatch } from './lib/bridgeBatch';
-import { needsDesktopDelivery } from './lib/bridgeDelivery';
 import { classifyBridgeError } from './lib/bridgeError';
+import {
+  deliveredSummaryVersion,
+  isSummaryPending,
+  markSummaryPending,
+  needsDesktopDelivery,
+  shouldBackfillDeliveredSummary,
+  summaryMarkerAfterTranscriptOnlyExport,
+} from './lib/bridgeDelivery';
 import { getStore, handleDb, refreshHighlights, syncIndex } from './db';
 import {
   appendAudit,
@@ -63,6 +70,7 @@ import {
   setAnalysis,
   UPDATE_KEY,
   type Analysis,
+  type AnalysisRecord,
   type AskResult,
   type ChatMessage,
   type DocType,
@@ -143,7 +151,16 @@ function notify(title: string, message: string, meetingId: string): void {
 const deps: PipelineDeps = {
   getMeeting: loadMeetingForAI,
   getRecord: getAnalysis,
-  setRecord: setAnalysis,
+  setRecord: async (id, record) => {
+    await setAnalysis(id, record);
+    if (record.status === 'done') {
+      const key = BRIDGE_SUMMARY_KEY(id);
+      const stored = await chrome.storage.local.get(key);
+      if (!isSummaryPending(stored[key])) {
+        await chrome.storage.local.set({ [key]: markSummaryPending(stored[key]) });
+      }
+    }
+  },
   createClient: async () => {
     const settings = await loadSettingsForAI();
     const problem = validateSettings(settings);
@@ -191,6 +208,9 @@ async function sweep(): Promise<void> {
     const [meetings, records] = await Promise.all([loadMeetings(), loadAnalyses()]);
     for (const m of findFinishedMeetings(meetings, records, Date.now())) {
       await analyze(m.id);
+      const refreshed = await getAnalysis(m.id);
+      if (refreshed) records[m.id] = refreshed;
+      else delete records[m.id];
     }
     await enforceRetention(meetings);
     // Opt-in second delivery target: the desktop vault. Only meetings that have
@@ -199,12 +219,14 @@ async function sweep(): Promise<void> {
     if ((await loadSettings()).desktopBridge) {
       for (const m of meetings) {
         if (isLive(m, Date.now())) continue;
-        await deliverToDesktop(m).catch((e) =>
-          console.warn('[MeetCC] desktop bridge delivery failed:', e),
-        );
+        await deliverToDesktop(
+          m,
+          false,
+          true,
+          records[m.id] ?? null,
+        ).catch((e) => console.warn('[MeetCC] desktop bridge delivery failed:', e));
       }
     }
-    // the index is derived data: rebuilding it from storage is cheap and keeps
     // it correct even if a write was missed while the worker was suspended
     await syncIndex().catch((e) => console.warn('[MeetCC] index sync failed:', e));
     for (const m of meetings) {
@@ -560,43 +582,60 @@ function handleBridgeSend(
   });
 }
 
-/**
- * Hand a finished meeting to the desktop vault, captions first delivery only
- * carrying the note body.
- *
- * Deliberately incremental: the sweep runs every minute, so re-sending the
- * whole transcript each time would pile duplicates into the vault. The caption
- * counter and summary version are updated only after the host confirms.
- */
+/** Delivers new captions and any summary version not yet confirmed by desktop. */
 async function deliverToDesktop(
   meeting: Meeting,
   force = false,
   includeSummary = true,
+  knownRecord?: AnalysisRecord | null,
 ): Promise<{ ok: boolean; error?: string }> {
   const key = BRIDGE_SENT_KEY(meeting.id);
   const summaryKey = BRIDGE_SUMMARY_KEY(meeting.id);
-  const [storedSent, deliveredSummary] = await Promise.all([
-    chrome.storage.local.get(key),
-    chrome.storage.local.get(summaryKey),
-  ]);
-  const sent = Number(storedSent[key] ?? 0);
-  const record = includeSummary ? await getAnalysis(meeting.id) : null;
-  const completeRecord = record?.status === 'done' ? record : null;
+  const stored = await chrome.storage.local.get([key, summaryKey]);
+  const sent = Number(stored[key] ?? 0);
+  const record = includeSummary
+    ? knownRecord === undefined
+      ? await getAnalysis(meeting.id)
+      : knownRecord
+    : knownRecord ?? null;
+  const completeRecord =
+    includeSummary && record?.status === 'done' ? record : null;
+  const deliveredVersion = deliveredSummaryVersion(stored[summaryKey]);
+  const pendingSummaryMarker = isSummaryPending(stored[summaryKey]);
+  if (
+    completeRecord &&
+    shouldBackfillDeliveredSummary(
+      sent,
+      meeting.entries.length,
+      deliveredVersion,
+      pendingSummaryMarker,
+      force,
+    )
+  ) {
+    await chrome.storage.local.set({ [summaryKey]: completeRecord.generatedAt });
+    return { ok: true };
+  }
   const summaryPending =
-    !!completeRecord && deliveredSummary[summaryKey] !== completeRecord.generatedAt;
+    !!completeRecord &&
+    (pendingSummaryMarker || deliveredVersion !== completeRecord.generatedAt);
   if (
     !needsDesktopDelivery({
       force,
       sentEntries: sent,
       totalEntries: meeting.entries.length,
       summaryVersion: completeRecord?.generatedAt,
-      deliveredSummaryVersion:
-        typeof deliveredSummary[summaryKey] === 'string' ? deliveredSummary[summaryKey] : undefined,
+      deliveredSummaryVersion: deliveredVersion,
     })
   ) return { ok: true };
   const fromSent = force && sent >= meeting.entries.length ? 0 : sent;
   const replaceSummary = !!completeRecord && (force || summaryPending);
-  const batch = toBridgeBatch(meeting, fromSent, completeRecord?.analysis ?? null, replaceSummary);
+  const batch = toBridgeBatch(
+    meeting,
+    fromSent,
+    completeRecord?.analysis ?? null,
+    force || replaceSummary,
+    completeRecord?.generatedAt,
+  );
   if (force && sent >= meeting.entries.length) {
     batch.operationId = `${meeting.id}:manual-${Date.now()}`;
   }
@@ -614,6 +653,14 @@ async function deliverToDesktop(
   }
   bridgeErrorLogged = false;
   const storageUpdate: Record<string, string | number> = { [key]: meeting.entries.length };
+  if (!includeSummary) {
+    storageUpdate[summaryKey] = summaryMarkerAfterTranscriptOnlyExport(
+      stored[summaryKey],
+      sent,
+      meeting.entries.length,
+      knownRecord?.status === 'done' ? knownRecord.generatedAt : undefined,
+    );
+  }
   if (completeRecord) storageUpdate[summaryKey] = completeRecord.generatedAt;
   await chrome.storage.local.set(storageUpdate);
   await appendAudit('bridge.send', `${meeting.id}: ${batch.entries.length} baris`);
@@ -634,7 +681,8 @@ async function deliverTranscriptToDesktop(id: string): Promise<{ ok: boolean; er
   const meeting = await loadMeetingForAI(id);
   if (!meeting) return { ok: false, error: t('ext.err.meetingNotFound') };
   if (!meeting.entries.length) return { ok: false, error: t('ext.err.emptyTranscription') };
-  return deliverToDesktop(meeting, true, false);
+  const record = await getAnalysis(id);
+  return deliverToDesktop(meeting, true, false, record);
 }
 
 function isDocType(value: unknown): value is DocType {

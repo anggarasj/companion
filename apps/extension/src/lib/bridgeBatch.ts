@@ -10,9 +10,9 @@ import type { BridgeBatch } from '@meetcc/vault';
 /**
  * One delivery for `meeting`, carrying only the captions after `sent`.
  *
- * `operationId` is derived from the caption slice and whether it carries a
- * summary. A transcript-only export and its later summarized delivery must
- * not dedupe each other; retries of either version remain idempotent.
+ * `operationId` is derived from the caption slice and summary version. A
+ * transcript-only export and its later summarized delivery must not dedupe
+ * each other; retries of either version remain idempotent.
  */
 export function toBridgeBatch(
   meeting: Meeting,
@@ -20,11 +20,12 @@ export function toBridgeBatch(
   analysis?: Analysis | null,
   /** A manual export: carry the current summary even after the first delivery. */
   resend = false,
+  summaryVersion?: string,
 ): BridgeBatch {
   const roomId = roomIdOf(meeting.id);
   const from = Math.max(0, sent);
   return {
-    operationId: `${meeting.id}:${sent}-${meeting.entries.length}:${analysis ? 'summary' : 'transcript'}`,
+    operationId: `${meeting.id}:${sent}-${meeting.entries.length}:${analysis ? `summary:${summaryVersion ?? ''}` : 'transcript'}`,
     roomId,
     // same rule the meeting store uses to label a room
     platform: roomId.startsWith('tms-') ? 'teams' : 'google-meet',

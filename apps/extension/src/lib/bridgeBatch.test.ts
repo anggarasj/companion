@@ -41,6 +41,23 @@ describe('toBridgeBatch', () => {
     );
   });
 
+  it('includes the analysis version in summary operation ids', () => {
+    const analysis: Analysis = {
+      executiveSummary: 'Ringkasan rapat.',
+      timeline: [],
+      keyDiscussions: [],
+      decisions: [],
+      actionItems: [],
+      risks: [],
+      openQuestions: [],
+      nextSteps: [],
+      diagrams: [],
+    };
+    expect(toBridgeBatch(meeting(), 0, analysis, false, 'v1').operationId).not.toBe(
+      toBridgeBatch(meeting(), 0, analysis, false, 'v2').operationId,
+    );
+  });
+
   it('carries the room, participants and start of the meeting', () => {
     const batch = toBridgeBatch(meeting(), 0);
     expect(batch.roomId).toBe('abc-defg-hij');
@@ -73,6 +90,9 @@ describe('toBridgeBatch', () => {
     expect(batch.entries.map((entry) => entry.text)).toEqual(['baris satu', 'baris dua']);
     expect(batch.markdown).toBeUndefined();
     expect(batch.snapshot).toBe(true);
+  });
+  it('marks repeated transcript-only exports as snapshots', () => {
+    expect(toBridgeBatch(meeting(), 0, null, true).snapshot).toBe(true);
   });
 });
 
