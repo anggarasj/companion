@@ -3,6 +3,7 @@ import {
   startedAt,
   type Analysis,
   type AnalysisRecord,
+  type DocType,
   type Meeting,
 } from '@meetcc/shared'
 import { locale, t } from '@meetcc/shared/i18n';
@@ -225,4 +226,33 @@ export function obsidianVault(
     })
   }
   return files
+}
+
+/** Obsidian note for one generated document, linked back to its meeting. */
+export function toObsidianDocument(
+  meeting: Meeting,
+  docType: DocType,
+  content: string,
+): { path: string; content: string } {
+  const base = obsidianPath(meeting).split('/').pop()?.replace(/\.md$/, '') ?? 'meeting'
+  const now = new Date().toISOString()
+  return {
+    path: `${base}-${docType}.md`,
+    content: [
+      '---',
+      `source_companion_id: ${JSON.stringify(companionIdFor(meeting))}`,
+      'type: generated-document',
+      `document_type: ${docType}`,
+      'tags:',
+      '  - companion',
+      '  - generated-document',
+      `  - ${docType}`,
+      `created: ${now}`,
+      `updated: ${now}`,
+      '---',
+      '',
+      content.trim(),
+      '',
+    ].join('\n'),
+  }
 }

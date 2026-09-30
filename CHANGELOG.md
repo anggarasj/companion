@@ -62,7 +62,18 @@ Thanks to everyone who contributed to this release:
 
 ### Features
 
+* **desktop:** rename and trash vault folders
+* **desktop:** ask AI questions about delivered meeting transcripts
+* **extension:** scope generated Notulen to selected timeline topics
+* **extension:** move document output generation into Summary
+* **extension:** export the selected document to Markdown, Obsidian, PDF, or Desktop
+* **extension:** export transcripts to desktop before generating a summary
 * **ui:** centralize extension-led controls and palette across both apps
+
+### Bug Fixes
+
+* **desktop:** launch a headless export host and migrate old registrations
+* **extension:** report document generation success only after output is loaded
 
 ## [1.15.0](https://github.com/suiflex/companion/compare/v1.14.0...v1.15.0) (2026-09-23)
 

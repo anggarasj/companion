@@ -142,6 +142,28 @@ describe('runDocGen double-submit guard', () => {
     expect(c2.ok).toBe(true);
     expect(calls).toBe(10); // + 2 per document
   });
+  it('shares the same Notulen scope but keeps different topic selections separate', async () => {
+    const calls: string[] = []
+    const client = clientOf(async ({ user }) => {
+      calls.push(user)
+      return FINE
+    })
+    const { deps } = makeDeps(client)
+    const budget = [{ time: '01:00', topic: 'Anggaran' }]
+    const vendor = [{ time: '02:00', topic: 'Vendor' }]
+    const sameScope = await Promise.all([
+      runDocGen('m7', 'notulen', undefined, deps, budget),
+      runDocGen('m7', 'notulen', undefined, deps, budget),
+    ])
+    const differentScopes = await Promise.all([
+      runDocGen('m8', 'notulen', undefined, deps, budget),
+      runDocGen('m8', 'notulen', undefined, deps, vendor),
+    ])
+
+    expect(sameScope.every((result) => result.ok)).toBe(true)
+    expect(differentScopes.every((result) => result.ok)).toBe(true)
+    expect(calls).toHaveLength(6)
+  })
 });
 
 describe('runDocGen behaviour', () => {

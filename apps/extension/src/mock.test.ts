@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadDashboard } from '@meetcc/shared';
+import { t } from '@meetcc/shared/i18n';
 
 describe('standalone dev mock', () => {
   beforeEach(async () => {
@@ -129,5 +130,27 @@ describe('standalone dev mock', () => {
 
     expect(await chrome.permissions.contains({ origins: ['<all_urls>'] })).toBe(true);
     expect(await chrome.permissions.request({ origins: ['<all_urls>'] })).toBe(true);
+  });
+  it('does not claim to generate documents in the local preview', async () => {
+    const response = await chrome.runtime.sendMessage({
+      type: 'generate-doc',
+      meetingId: 'meet/arch-sync-2026',
+      docType: 'brd',
+    }) as { ok: boolean; error: string };
+    expect(response).toEqual({
+      ok: false,
+      error: t('ext.docs.previewUnavailable'),
+    });
+  });
+  it('does not claim Desktop export success in the local preview', async () => {
+    const response = await chrome.runtime.sendMessage({
+      type: 'bridge-export-document',
+      meetingId: 'meet/arch-sync-2026',
+      docType: 'brd',
+    }) as { ok: boolean; error: string };
+    expect(response).toEqual({
+      ok: false,
+      error: t('ext.docs.desktopPreviewUnavailable'),
+    });
   });
 });

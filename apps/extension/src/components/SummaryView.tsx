@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { locale, t } from '@meetcc/shared/i18n';
 import type { Analysis, AnalysisRecord, Meeting, MiniContext } from '@meetcc/shared';
 import {
-  appendAudit,
   saveContext,
   getContext,
   getMeetingTags,
@@ -14,12 +13,7 @@ import {
   MEETING_TAGS_PREFIX,
 } from '@meetcc/shared';
 import { db } from '../lib/db';
-import { toMarkdown } from '@meetcc/exporters/markdown';
-import { obsidianPath, toObsidian } from '@meetcc/exporters/obsidian';
-import { GATE_EVENT } from '@meetcc/exporters/gate';
 import { datedCount, toChecklist, toIcs } from '@meetcc/exporters/tasks';
-import { lazyImport } from '../lib/lazy';
-import { classifyBridgeError } from '../lib/bridgeError';
 import { Button, TextArea, useToast } from '@meetcc/ui';
 
 function downloadBlob(name: string, blob: Blob) {
@@ -431,98 +425,10 @@ export function SummaryView({ meeting, record, live }: Props) {
     }
   };
 
-  const actions = (analysis: Analysis) => (
-    <div className="subbar">
-      <Button onClick={() => {
-        downloadBlob(
-          `${meeting.id}.md`,
-          new Blob([toMarkdown(meeting, analysis)], { type: 'text/markdown' }),
-        );
-        toast('success', t('ext.summary.markdownDownloaded'));
-      }}>
-        ⬇ Markdown
-      </Button>
-      <Button onClick={() => {
-        // §32.1 probe: Obsidian-friendly export + local audit event for the
-        // G1/G2 gate metrics. No telemetry — the event stays in the device ring.
-        downloadBlob(
-          obsidianPath(meeting).split('/').pop()!,
-          new Blob([toObsidian(meeting, analysis)], { type: 'text/markdown' }),
-        );
-        void appendAudit(GATE_EVENT, 'meetings=1').catch(() => undefined);
-        toast('success', t('ext.summary.obsidianDownloaded'));
-      }}>
-        ⬇ Obsidian
-      </Button>
-      <Button
-        disabled={busy}
-        onClick={async () => {
-          setBusy(true);
-          try {
-            // jsPDF + mermaid are heavy; load them only when actually exporting
-            const [{ toPdf }, { renderPng }, { orgLogoPng }] = await Promise.all([
-              lazyImport(() => import('@meetcc/exporters/pdf')),
-              lazyImport(() => import('../lib/mermaid')),
-              lazyImport(() => import('../lib/logo')),
-            ]);
-            // rasterize diagrams in the browser; a bad one is skipped, not fatal
-            const rendered = await Promise.all(
-              (analysis.diagrams ?? []).map(async (d) => {
-                try {
-                  const png = await renderPng(d.mermaid);
-                  return { title: d.title, ...png };
-                } catch {
-                  return null;
-                }
-              }),
-            );
-            const diagrams = rendered.filter((d): d is NonNullable<typeof d> => d !== null);
-            const logo = await orgLogoPng();
-            downloadBlob(`${meeting.id}.pdf`, toPdf(meeting, analysis, diagrams, logo));
-            toast('success', t('ext.docs.pdfDownloaded'));
-          } catch (e) {
-            toast('error', t('ext.docs.pdfFailed', { error: (e as Error).message }));
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        ⬇ PDF
-      </Button>
-      <Button disabled={busy}
-      onClick={async () => {
-        setBusy(true);
-        try {
-          const res = (await chrome.runtime.sendMessage({
-            type: 'bridge-deliver-meeting',
-            meetingId: meeting.id,
-          })) as { ok?: boolean; error?: string };
-          if (res?.ok) {
-            toast('success', t('ext.summary.desktopSent'));
-          } else {
-            const err = res?.error ?? '';
-            const classified = classifyBridgeError(err);
-            if (classified === 'not_found' || classified === 'not_registered') {
-              toast('error', t('ext.summary.desktopNotConnected'));
-            } else {
-              toast('error', t('ext.summary.desktopFailed', { error: err }));
-            }
-          }
-        } catch (e) {
-          toast('error', t('ext.summary.desktopFailed', { error: (e as Error).message }));
-        } finally {
-          setBusy(false);
-        }
-      }}>{t('ext.summary.exportDesktop')}</Button>
-      <span className="spacer" />
-      <Button onClick={regenerate} disabled={busy}>{busy ? 'Memproses…' : live ? '↻ Perbarui MoM' : '↻ Regenerate'}</Button>
-    </div>
-  );
 
   if (record?.status === 'done') {
     return (
       <>
-        {actions(record.analysis)}
         <div className="summary-meta dim">
           Provider: {record.provider} · {new Date(record.generatedAt).toLocaleString(locale())}
           {record.provisional &&

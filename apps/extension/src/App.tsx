@@ -21,7 +21,7 @@ import { Transcript } from './components/Transcript';
 import { SummaryView } from './components/SummaryView';
 import { DiagramView } from './components/DiagramView';
 import { AskView } from './components/AskView';
-import { DocGen } from './components/DocGen';
+import { DocumentOutputs } from './components/DocGen';
 import { CommandPalette } from './components/CommandPalette';
 import { KnowledgeView } from './components/KnowledgeView';
 import { MeetingHeader } from './components/MeetingHeader';
@@ -29,14 +29,13 @@ import { DecisionLog } from './components/DecisionLog';
 import { SettingsView } from './components/SettingsView';
 import { UpdateBanner } from './components/UpdateBanner';
 
-type Tab = 'summary' | 'transcript' | 'diagram' | 'ask' | 'docs';
+type Tab = 'summary' | 'transcript' | 'diagram' | 'ask'
 
 const TAB_LABELS: Record<Tab, Parameters<typeof t>[0]> = {
   summary: 'ext.tab.summary',
   transcript: 'ext.tab.transcript',
   diagram: 'ext.tab.diagram',
   ask: 'ext.tab.ask',
-  docs: 'ext.tab.docs',
 };
 const TABS = Object.keys(TAB_LABELS) as Tab[];
 
@@ -275,14 +274,15 @@ function Shell({ initialMeeting }: { initialMeeting: string | null }) {
               />
             ) : tab === 'ask' ? (
               <AskView meeting={selected} live={isLive(selected, now)} />
-            ) : tab === 'docs' ? (
-              <DocGen meeting={selected} />
             ) : (
-              <SummaryView
-                meeting={selected}
-                record={selectedRecord}
-                live={isLive(selected, now)}
-              />
+              <>
+                <DocumentOutputs meeting={selected} analysis={analysis} />
+                <SummaryView
+                  meeting={selected}
+                  record={selectedRecord}
+                  live={isLive(selected, now)}
+                />
+              </>
             )}
           </>
         ) : (
