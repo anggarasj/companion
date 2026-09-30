@@ -165,14 +165,30 @@ it('stores a generated document separately without replacing the meeting note', 
     }),
     state,
   )
+  await applyBatch(
+    { vault, now },
+    batch({
+      operationId: 'document-brd-v2',
+      sessionKey: documentSession,
+      roomId: 'meet/abc-document-brd',
+      platform: 'google-meet',
+      participants: [],
+      entries: [],
+      markdown: '# Gate review — BRD\n\nUpdated requirements document.',
+      replaceBody: true,
+      snapshot: true,
+      includeTranscript: false,
+    }),
+    state,
+  )
 
   const notes = await vault.readAll()
   expect(notes).toHaveLength(2)
   expect(notes.find((note) => note.sessionKey === sourceSession)?.body).toBe('Summary stays here.')
   const document = notes.find((note) => note.sessionKey === documentSession)
   expect(document?.title).toBe('Gate review — BRD')
-  expect(document?.body).toBe('Requirements document.')
-  expect(document?.platform).toBe('manual')
+  expect(document?.body).toBe('Updated requirements document.')
+  expect(document?.platform).toBe('google-meet')
   expect(document?.transcript).toBeUndefined()
   await expect(vault.readTranscript(document!.id)).rejects.toThrow()
 })

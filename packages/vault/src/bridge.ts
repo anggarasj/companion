@@ -119,6 +119,7 @@ export async function applyBatch(
     title: '',
     body: '',
   }
+  note.platform = batch.platform
   if (batch.markdown !== undefined && (!existing || batch.replaceBody)) {
     // First delivery carries the (possibly AI-cleaned) note body. The writer
     // synthesizes the `# heading`, so split it out of the markdown body.

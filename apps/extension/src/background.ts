@@ -27,6 +27,7 @@ import { obsidianVault } from '@meetcc/exporters/obsidian';
 import { loadSettingsForAI } from './lib/aiSettings';
 import { makeZip } from './lib/zip';
 import { toBridgeBatch, toDocumentBridgeBatch } from './lib/bridgeBatch';
+import { needsDesktopDelivery } from './lib/bridgeDelivery';
 import { classifyBridgeError } from './lib/bridgeError';
 import { getStore, handleDb, refreshHighlights, syncIndex } from './db';
 import {
@@ -543,6 +544,7 @@ let bridgeErrorLogged = false;
 
 /** How many caption lines of a meeting the vault has already been given. */
 const BRIDGE_SENT_KEY = (meetingId: string): string => `bridge:${meetingId}`;
+const BRIDGE_SUMMARY_KEY = (meetingId: string): string => `bridge-summary:${meetingId}`;
 
 function handleBridgeSend(
   batch: object,
@@ -563,9 +565,8 @@ function handleBridgeSend(
  * carrying the note body.
  *
  * Deliberately incremental: the sweep runs every minute, so re-sending the
- * whole transcript each time would pile duplicates into the sidecar. The
- * counter only advances once the host confirms, and the host dedupes by the
- * operation id, so a lost counter costs a redelivery rather than a duplicate.
+ * whole transcript each time would pile duplicates into the vault. The caption
+ * counter and summary version are updated only after the host confirms.
  */
 async function deliverToDesktop(
   meeting: Meeting,
@@ -573,16 +574,29 @@ async function deliverToDesktop(
   includeSummary = true,
 ): Promise<{ ok: boolean; error?: string }> {
   const key = BRIDGE_SENT_KEY(meeting.id);
-  const sent = Number((await chrome.storage.local.get(key))[key] ?? 0);
-  if (!force && sent >= meeting.entries.length) return { ok: true };
+  const summaryKey = BRIDGE_SUMMARY_KEY(meeting.id);
+  const [storedSent, deliveredSummary] = await Promise.all([
+    chrome.storage.local.get(key),
+    chrome.storage.local.get(summaryKey),
+  ]);
+  const sent = Number(storedSent[key] ?? 0);
   const record = includeSummary ? await getAnalysis(meeting.id) : null;
+  const completeRecord = record?.status === 'done' ? record : null;
+  const summaryPending =
+    !!completeRecord && deliveredSummary[summaryKey] !== completeRecord.generatedAt;
+  if (
+    !needsDesktopDelivery({
+      force,
+      sentEntries: sent,
+      totalEntries: meeting.entries.length,
+      summaryVersion: completeRecord?.generatedAt,
+      deliveredSummaryVersion:
+        typeof deliveredSummary[summaryKey] === 'string' ? deliveredSummary[summaryKey] : undefined,
+    })
+  ) return { ok: true };
   const fromSent = force && sent >= meeting.entries.length ? 0 : sent;
-  const batch = toBridgeBatch(
-    meeting,
-    fromSent,
-    record?.status === 'done' ? record.analysis : null,
-    force,
-  );
+  const replaceSummary = !!completeRecord && (force || summaryPending);
+  const batch = toBridgeBatch(meeting, fromSent, completeRecord?.analysis ?? null, replaceSummary);
   if (force && sent >= meeting.entries.length) {
     batch.operationId = `${meeting.id}:manual-${Date.now()}`;
   }
@@ -599,7 +613,9 @@ async function deliverToDesktop(
     return { ok: false, error };
   }
   bridgeErrorLogged = false;
-  await chrome.storage.local.set({ [key]: meeting.entries.length });
+  const storageUpdate: Record<string, string | number> = { [key]: meeting.entries.length };
+  if (completeRecord) storageUpdate[summaryKey] = completeRecord.generatedAt;
+  await chrome.storage.local.set(storageUpdate);
   await appendAudit('bridge.send', `${meeting.id}: ${batch.entries.length} baris`);
   return { ok: true };
 }
@@ -685,6 +701,13 @@ function handleBridgeMessage(msg: Record<string, unknown>): Promise<unknown> | n
   }
   if (msg.type === 'bridge-ping') {
     return handleBridgeSend({ type: 'ping' });
+  }
+  if (msg.type === 'bridge-deliver-meeting' && typeof msg.meetingId === 'string') {
+    return loadMeetings().then((meetings) => {
+      const meeting = meetings.find((item) => item.id === msg.meetingId);
+      if (!meeting) return { ok: false, error: t('ext.err.meetingNotFound') };
+      return deliverToDesktop(meeting, true);
+    });
   }
   if (msg.type === 'bridge-deliver-transcript' && typeof msg.meetingId === 'string') {
     return deliverTranscriptToDesktop(msg.meetingId);

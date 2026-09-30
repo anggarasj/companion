@@ -48,9 +48,41 @@ export function DocumentOutputs({ meeting, analysis }: { meeting: Meeting; analy
   // P2.1 — an optional user template steers the document's structure.
   const [templates, setTemplates] = useState<{ id: string; name: string }[]>([])
   const [templateId, setTemplateId] = useState('')
-  const [selectedTimeline, setSelectedTimeline] = useState<Set<number>>(
-    () => new Set(analysis?.timeline.map((_, index) => index) ?? []),
-  )
+  const timeline = analysis?.timeline ?? []
+  const timelineKey = `${meeting.id}:${JSON.stringify(timeline)}`
+  const [timelineSelection, setTimelineSelection] = useState<{
+    key: string
+    indices: Set<number>
+  }>(() => ({
+    key: timelineKey,
+    indices: new Set(timeline.map((_, index) => index)),
+  }))
+  const selectedTimeline =
+    timelineSelection.key === timelineKey
+      ? timelineSelection.indices
+      : new Set(timeline.map((_, index) => index))
+
+  useEffect(() => {
+    setTimelineSelection({
+      key: timelineKey,
+      indices: new Set(Array.from({ length: timeline.length }, (_, index) => index)),
+    })
+  }, [timelineKey, timeline.length])
+
+  const toggleTimeline = (index: number, checked: boolean): void => {
+    setTimelineSelection((selection) => {
+      const selected =
+        selection.key === timelineKey
+          ? selection.indices
+          : new Set(timeline.map((_, itemIndex) => itemIndex))
+      const next = new Set(selected)
+      if (checked) next.add(index)
+      else next.delete(index)
+      if (timeline.length && !next.size) return { key: timelineKey, indices: selected }
+      return { key: timelineKey, indices: next }
+    })
+  }
+
 
   useEffect(() => {
     let alive = true
@@ -109,7 +141,6 @@ export function DocumentOutputs({ meeting, analysis }: { meeting: Meeting; analy
   const pct = active && active.total > 0 ? Math.round((active.step / active.total) * 100) : 0
   // any type currently generating (blocks starting another to keep one at a time)
   const anyRunning = prog ? now - Date.parse(prog.updatedAt) <= 90_000 : false
-  const timeline = analysis?.timeline ?? []
 
 
   const generate = async (
@@ -279,14 +310,7 @@ export function DocumentOutputs({ meeting, analysis }: { meeting: Meeting; analy
                   type="checkbox"
                   checked={selectedTimeline.has(index)}
                   disabled={anyRunning}
-                  onChange={(event) => {
-                    setSelectedTimeline((selected) => {
-                      const next = new Set(selected)
-                      if (event.target.checked) next.add(index)
-                      else next.delete(index)
-                      return next
-                    })
-                  }}
+                  onChange={(event) => toggleTimeline(index, event.target.checked)}
                 />
                 <span>
                   <strong>{item.time || '—'}</strong> {item.topic}

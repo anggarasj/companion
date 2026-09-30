@@ -10,10 +10,9 @@ import type { BridgeBatch } from '@meetcc/vault';
 /**
  * One delivery for `meeting`, carrying only the captions after `sent`.
  *
- * `operationId` is derived from the slice rather than random so a redelivery
- * of the same slice is recognisably the same operation: if the sent-counter
- * fails to persist, the host's own dedupe still catches the repeat instead of
- * appending those captions to the transcript a second time.
+ * `operationId` is derived from the caption slice and whether it carries a
+ * summary. A transcript-only export and its later summarized delivery must
+ * not dedupe each other; retries of either version remain idempotent.
  */
 export function toBridgeBatch(
   meeting: Meeting,
@@ -25,7 +24,7 @@ export function toBridgeBatch(
   const roomId = roomIdOf(meeting.id);
   const from = Math.max(0, sent);
   return {
-    operationId: `${meeting.id}:${sent}-${meeting.entries.length}`,
+    operationId: `${meeting.id}:${sent}-${meeting.entries.length}:${analysis ? 'summary' : 'transcript'}`,
     roomId,
     // same rule the meeting store uses to label a room
     platform: roomId.startsWith('tms-') ? 'teams' : 'google-meet',
@@ -43,9 +42,9 @@ export function toBridgeBatch(
   };
 }
 
-/** A generated document is a separate desktop note, never a replacement for
- *  the meeting's transcript/summary note. Re-exporting the same version is
- *  idempotent; a newly generated version updates that document's note. */
+/** A generated document is a separate delivered note, never a replacement for
+ * the meeting note. Its real meeting platform makes desktop saves copy rather
+ * than overwrite the delivered source. Re-exporting a version is idempotent. */
 export function toDocumentBridgeBatch(
   meeting: Meeting,
   docType: DocType,
@@ -54,13 +53,14 @@ export function toDocumentBridgeBatch(
   markdown: string,
   generatedAt: string,
 ): BridgeBatch {
-  const roomId = `${roomIdOf(meeting.id)}-document-${docType}`;
+  const meetingRoomId = roomIdOf(meeting.id);
+  const roomId = `${meetingRoomId}-document-${docType}`;
   const start = startedAt(meeting) ?? generatedAt;
   return {
     operationId: `${meeting.id}:document:${docType}:${generatedAt}`,
     sessionKey: `${roomId}#${start}`,
     roomId,
-    platform: 'manual',
+    platform: meetingRoomId.startsWith('tms-') ? 'teams' : 'google-meet',
     startedAt: start,
     participants: participants(meeting),
     entries: [],
