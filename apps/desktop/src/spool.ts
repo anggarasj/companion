@@ -1,10 +1,10 @@
 // Applying what the native host spooled.
 //
-// The host is the desktop binary in `--native-host` mode. It writes each batch
-// to disk verbatim and knows nothing about notes — vault logic stays in
-// TypeScript so the host and the app cannot drift apart, which is the rule
-// CLAUDE.md records. This is the other half: read the spool, apply each batch
-// with the same `applyBatch` the Node host used, delete what succeeded.
+// The desktop executable enters its native-host loop when Chromium supplies
+// the extension origin as argv[1]. It writes each batch to disk verbatim and
+// knows nothing about notes — vault logic stays in TypeScript so host and app
+// cannot drift apart. Read the spool, apply each batch with the same
+// `applyBatch` the Node host used, then delete what succeeded.
 //
 // What this buys beyond replacing Node: a delivery arriving while the app is
 // closed waits on disk instead of being dropped.

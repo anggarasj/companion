@@ -1,4 +1,4 @@
-// Registering the separately bundled, headless native-messaging executable.
+// Registering the desktop executable as a native-messaging host.
 //
 // It deliberately does not install the extension: that means downloading a
 // release, unzipping it and launching a browser with a dedicated profile, and
@@ -67,120 +67,41 @@ fn home() -> PathBuf {
     PathBuf::from(env::var("HOME").unwrap_or_else(|_| ".".into()))
 }
 
-/// The browsers on this machine, and whether the bridge is registered for each.
+/// The browsers on this machine, and whether a host manifest is present.
 ///
-/// Presence is decided by the profile directory existing: a browser that has
-/// never been run has nothing to register into, and one that is installed but
-/// unused would otherwise be offered and then fail.
+/// Listing is read-only. A CLI registration or a developer extension may use
+/// this host name with a different executable or extension origin.
 #[tauri::command]
 pub fn list_browsers() -> Vec<Browser> {
     let home = home();
-    let host = env::current_exe()
-        .ok()
-        .and_then(|gui| native_host_path(&gui).ok())
-        .filter(|path| path.is_file());
     candidates(&home)
         .into_iter()
         .filter(|(_, dir)| dir.is_dir())
         .map(|(name, dir)| Browser {
             name: name.to_string(),
             manifest_dir: manifest_dir(&dir).to_string_lossy().into_owned(),
-            registered: host
-                .as_deref()
-                .is_some_and(|host| migrate_manifest(&dir, host)),
+            registered: is_registered(&dir),
         })
         .collect()
 }
 
-/// Upgrade an existing Companion registration from the GUI executable to the
-/// headless sidecar. Chrome ignores the old manifest's unsupported `args`.
-fn migrate_manifest(browser_root: &Path, host: &Path) -> bool {
-    if !host.is_file() {
-        return false;
-    }
-    let Ok(root) = fs::canonicalize(browser_root) else {
-        return false;
-    };
-    let parent = root.join("NativeMessagingHosts");
-    let Ok(parent) = fs::canonicalize(&parent) else {
-        return false;
-    };
-    if !parent.starts_with(&root) {
-        return false;
-    }
-    let path = parent.join(format!("{HOST_NAME}.json"));
-    let Ok(metadata) = fs::symlink_metadata(&path) else {
-        return false;
-    };
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return false;
-    }
-    let Ok(path) = fs::canonicalize(&path) else {
-        return false;
-    };
-    if !path.starts_with(&root) {
-        return false;
-    }
-    let Ok(raw) = fs::read_to_string(&path) else {
-        return false;
-    };
-    let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&raw) else {
-        return false;
-    };
-    let host_text = host.to_string_lossy();
-    if manifest.get("name").and_then(|name| name.as_str()) != Some(HOST_NAME) {
-        return false;
-    }
-    if manifest.get("path").and_then(|path| path.as_str()) == Some(host_text.as_ref()) {
-        return true;
-    }
-    fs::write(&path, manifest_json(&host_text)).is_ok()
+fn is_registered(browser_root: &Path) -> bool {
+    manifest_dir(browser_root)
+        .join(format!("{HOST_NAME}.json"))
+        .is_file()
 }
 
-/// Rewrite registrations from the prior GUI-host version when the app is
-/// upgraded. Existing registrations are the user's opt-in; only our own
-/// manifest name is eligible for migration.
-pub fn migrate_existing_bridges() {
-    let Ok(gui) = env::current_exe() else {
-        return;
-    };
-    let Ok(host) = native_host_path(&gui) else {
-        return;
-    };
-    if !host.is_file() {
-        return;
-    }
-    for (_, dir) in candidates(&home())
-        .into_iter()
-        .filter(|(_, dir)| dir.is_dir())
-    {
-        let _ = migrate_manifest(&dir, &host);
-    }
-}
-
-/// The manifest body. Chromium does not support an `args` field in host
-/// manifests, so the registered executable itself must be headless.
-fn manifest_json(host: &str) -> String {
+/// The manifest body. Chromium supplies the extension origin as argv[1] when
+/// it launches the executable as a native-messaging host.
+fn manifest_json(exe: &str) -> String {
     serde_json::to_string_pretty(&serde_json::json!({
         "name": HOST_NAME,
         "description": "Companion vault capture host",
-        "path": host,
+        "path": exe,
         "type": "stdio",
         "allowed_origins": [format!("chrome-extension://{EXTENSION_ID}/")]
     }))
     .expect("native host manifest fields are serializable")
-}
-
-fn native_host_path(gui_exe: &Path) -> Result<PathBuf, String> {
-    let dir = gui_exe
-        .parent()
-        .ok_or_else(|| "desktop executable has no parent directory".to_owned())?;
-    let name = if cfg!(target_os = "windows") {
-        "companion-native-host.exe"
-    } else {
-        "companion-native-host"
-    };
-    Ok(dir.join(name))
 }
 
 /// Register the bridge for one browser, by its display name.
@@ -191,18 +112,11 @@ pub fn register_bridge(browser: String) -> Result<String, String> {
         .into_iter()
         .find(|(name, _)| *name == browser)
         .ok_or_else(|| format!("unknown browser: {browser}"))?;
-    let gui_exe = env::current_exe().map_err(|e| e.to_string())?;
-    let host = native_host_path(&gui_exe)?;
-    if !host.is_file() {
-        return Err(format!(
-            "native host executable is missing: {}",
-            host.display()
-        ));
-    }
+    let exe = env::current_exe().map_err(|e| e.to_string())?;
     let target = manifest_dir(&dir);
     fs::create_dir_all(&target).map_err(|e| e.to_string())?;
     let path = target.join(format!("{HOST_NAME}.json"));
-    fs::write(&path, manifest_json(&host.to_string_lossy())).map_err(|e| e.to_string())?;
+    fs::write(&path, manifest_json(&exe.to_string_lossy())).map_err(|e| e.to_string())?;
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -247,14 +161,13 @@ mod tests {
     }
 
     #[test]
-    fn the_manifest_points_to_a_dedicated_host_without_cli_args() {
-        let host =
-            Path::new("/Applications/Companion Desktop.app/Contents/MacOS/companion-native-host");
-        let json = manifest_json(&host.to_string_lossy());
+    fn the_manifest_points_to_the_desktop_executable_without_cli_args() {
+        let exe = "/Applications/Companion Desktop.app/Contents/MacOS/companion";
+        let json = manifest_json(exe);
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("manifest is not JSON");
         assert_eq!(parsed["name"], HOST_NAME);
         assert_eq!(parsed["type"], "stdio");
-        assert_eq!(parsed["path"], host.to_string_lossy().as_ref());
+        assert_eq!(parsed["path"], exe);
         assert!(parsed.get("args").is_none());
         assert_eq!(
             parsed["allowed_origins"],
@@ -263,74 +176,26 @@ mod tests {
     }
 
     #[test]
-    fn sidecar_path_is_next_to_the_desktop_executable() {
-        let path = native_host_path(Path::new(
-            "/Applications/Companion.app/Contents/MacOS/companion",
-        ))
-        .unwrap();
-        let sidecar = if cfg!(target_os = "windows") {
-            "companion-native-host.exe"
-        } else {
-            "companion-native-host"
-        };
-        assert_eq!(
-            path,
-            Path::new("/Applications/Companion.app/Contents/MacOS").join(sidecar)
-        );
-    }
+    fn checking_registration_does_not_rewrite_an_existing_host_manifest() {
+        let root = env::temp_dir().join(format!(
+            "companion-host-registration-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let manifest = manifest_dir(&root).join(format!("{HOST_NAME}.json"));
+        fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+        let original = serde_json::json!({
+            "name": HOST_NAME,
+            "path": "/usr/local/bin/node-host",
+            "type": "stdio",
+            "allowed_origins": ["chrome-extension://developer-id/"]
+        })
+        .to_string();
+        fs::write(&manifest, &original).unwrap();
 
-    #[test]
-    fn an_existing_gui_host_manifest_is_migrated_to_the_sidecar() {
-        let dir = env::temp_dir().join(format!("companion-host-migrate-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        let host = dir.join(if cfg!(target_os = "windows") {
-            "companion-native-host.exe"
-        } else {
-            "companion-native-host"
-        });
-        fs::write(&host, b"headless host").unwrap();
-        let browser_root = dir.join("profile");
-        let host_dir = manifest_dir(&browser_root);
-        fs::create_dir_all(&host_dir).unwrap();
-        let manifest = host_dir.join(format!("{HOST_NAME}.json"));
-        fs::write(
-            &manifest,
-            serde_json::json!({
-                "name": HOST_NAME,
-                "description": "Companion vault capture host",
-                "path": "/old/Companion.app/Contents/MacOS/companion",
-                "type": "stdio",
-                "args": ["--native-host"],
-                "allowed_origins": [format!("chrome-extension://{EXTENSION_ID}/")]
-            })
-            .to_string(),
-        )
-        .unwrap();
-
-        assert!(migrate_manifest(&browser_root, &host));
-        let migrated: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(&manifest).unwrap()).unwrap();
-        assert!(migrate_manifest(&browser_root, &host));
-        assert_eq!(migrated["path"], host.to_string_lossy().as_ref());
-        assert!(migrated.get("args").is_none());
-
-        #[cfg(unix)]
-        {
-            let linked_root = dir.join("linked-profile");
-            let external = dir.join("outside/NativeMessagingHosts");
-            fs::create_dir_all(&linked_root).unwrap();
-            fs::create_dir_all(&external).unwrap();
-            let external_manifest = external.join(format!("{HOST_NAME}.json"));
-            fs::copy(&manifest, &external_manifest).unwrap();
-            std::os::unix::fs::symlink(&external, linked_root.join("NativeMessagingHosts"))
-                .unwrap();
-            let original = fs::read_to_string(&external_manifest).unwrap();
-            assert!(!migrate_manifest(&linked_root, &host));
-            assert_eq!(fs::read_to_string(&external_manifest).unwrap(), original);
-        }
-
-        fs::remove_dir_all(dir).unwrap();
+        assert!(is_registered(&root));
+        assert_eq!(fs::read_to_string(&manifest).unwrap(), original);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

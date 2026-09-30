@@ -69,7 +69,6 @@ pub fn run() {
         // whose folder is gone falls back to the default instead of stranding
         // the window on an error.
         .setup(|app| {
-            install::migrate_existing_bridges();
             let config_dir = app.path().app_config_dir()?;
             let root = vault::startup_root(&config_dir);
             if let Err(e) = vault::ensure_root(&root) {
