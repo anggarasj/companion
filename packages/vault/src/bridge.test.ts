@@ -135,6 +135,48 @@ it('a manual resend replaces the body without appending the transcript again', a
   expect(note.body).toBe('Ringkasan baru.')
   expect(await vault.readTranscript(note.id)).toHaveLength(1)
 })
+it('stores a generated document separately without replacing the meeting note', async () => {
+  const now = () => '2026-09-01T10:00:00Z'
+  const sourceSession = 'meet/abc#2026-08-28T14:00'
+  const documentSession = 'meet/abc-document-brd#2026-08-28T14:00'
+  const state = { seen: {} }
+  await applyBatch(
+    { vault, now },
+    batch({
+      operationId: 'meeting-summary',
+      sessionKey: sourceSession,
+      markdown: '# Gate review\n\nSummary stays here.',
+    }),
+    state,
+  )
+  await applyBatch(
+    { vault, now },
+    batch({
+      operationId: 'document-brd-v1',
+      sessionKey: documentSession,
+      roomId: 'meet/abc-document-brd',
+      platform: 'manual',
+      participants: [],
+      entries: [],
+      markdown: '# Gate review — BRD\n\nRequirements document.',
+      replaceBody: true,
+      snapshot: true,
+      includeTranscript: false,
+    }),
+    state,
+  )
+
+  const notes = await vault.readAll()
+  expect(notes).toHaveLength(2)
+  expect(notes.find((note) => note.sessionKey === sourceSession)?.body).toBe('Summary stays here.')
+  const document = notes.find((note) => note.sessionKey === documentSession)
+  expect(document?.title).toBe('Gate review — BRD')
+  expect(document?.body).toBe('Requirements document.')
+  expect(document?.platform).toBe('manual')
+  expect(document?.transcript).toBeUndefined()
+  await expect(vault.readTranscript(document!.id)).rejects.toThrow()
+})
+
 
 it('a later sweep never replaces the body', async () => {
   const now = () => '2026-09-01T10:00:00Z'

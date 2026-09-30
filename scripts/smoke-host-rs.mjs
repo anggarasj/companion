@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const bin = process.argv[2];
-if (!bin) throw new Error('usage: smoke-host-rs.mjs <path to companion-desktop>');
+if (!bin) throw new Error('usage: smoke-host-rs.mjs <path to companion-native-host>');
 
 const frame = (obj) => {
   const body = Buffer.from(JSON.stringify(obj));
@@ -50,7 +50,7 @@ const batch = (id) => ({
 
 // Two batches and a ping in ONE write: the browser coalesces messages, and a
 // host that assumes one message per chunk passes every other test there is.
-const res = spawnSync(bin, ['--native-host'], {
+const res = spawnSync(bin, [], {
   input: Buffer.concat([frame(batch('op-1')), frame({ type: 'ping' }), frame(batch('op-2'))]),
   env: childEnv,
 });

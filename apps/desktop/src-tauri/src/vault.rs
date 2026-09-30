@@ -287,6 +287,116 @@ fn move_within(root: &Path, from: &str, to: &str) -> Result<(), String> {
     }
     fs::rename(&src, &dest).map_err(|e| e.to_string())
 }
+/// Resolve an existing folder and ensure symlinks cannot take it outside the vault.
+fn existing_folder(root: &Path, rel: &str) -> Result<PathBuf, String> {
+    let path = Path::new(rel);
+    if rel.is_empty()
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|c| !matches!(c, Component::Normal(_)))
+        || path
+            .components()
+            .next()
+            .is_some_and(|c| c.as_os_str() == TRASH || c.as_os_str() == TRANSCRIPT)
+    {
+        return Err(format!("invalid vault folder path: {rel}"));
+    }
+    let root = fs::canonicalize(root).map_err(|e| e.to_string())?;
+    let folder = root.join(path);
+    let mut current = root.clone();
+    for component in path.components() {
+        current.push(component);
+        if fs::symlink_metadata(&current)
+            .map_err(|e| e.to_string())?
+            .file_type()
+            .is_symlink()
+        {
+            return Err(format!("folder path contains a symlink: {rel}"));
+        }
+    }
+    let canonical = fs::canonicalize(&folder).map_err(|e| e.to_string())?;
+    if !canonical.starts_with(&root) || !canonical.is_dir() {
+        return Err(format!(
+            "folder is outside the vault or not a directory: {rel}"
+        ));
+    }
+    Ok(folder)
+}
+
+/// Rename a folder without replacing an existing path or moving it into itself.
+#[tauri::command]
+pub fn rename_vault_folder(
+    state: State<'_, VaultState>,
+    from: String,
+    to: String,
+) -> Result<(), String> {
+    rename_folder(&root(&state), &from, &to)
+}
+
+fn rename_folder(root: &Path, from: &str, to: &str) -> Result<(), String> {
+    let src = existing_folder(root, from)?;
+    let dst_rel = Path::new(to);
+    if to.is_empty()
+        || dst_rel.is_absolute()
+        || dst_rel
+            .components()
+            .any(|c| !matches!(c, Component::Normal(_)))
+        || dst_rel
+            .components()
+            .next()
+            .is_some_and(|c| c.as_os_str() == TRASH || c.as_os_str() == TRANSCRIPT)
+    {
+        return Err(format!("invalid vault folder path: {to}"));
+    }
+    let root = fs::canonicalize(root).map_err(|e| e.to_string())?;
+    let destination = root.join(dst_rel);
+    if destination == src || destination.starts_with(&src) {
+        return Err("a folder cannot be renamed into itself".into());
+    }
+    let parent = destination.parent().ok_or("invalid destination folder")?;
+    let canonical_parent = fs::canonicalize(parent).map_err(|e| e.to_string())?;
+    if !canonical_parent.starts_with(&root) {
+        return Err(format!("destination is outside the vault: {to}"));
+    }
+    let destination = canonical_parent.join(
+        destination
+            .file_name()
+            .ok_or("invalid destination folder")?,
+    );
+    if destination == src || destination.starts_with(&src) {
+        return Err("a folder cannot be renamed into itself".into());
+    }
+    if fs::symlink_metadata(&destination).is_ok() {
+        return Err(format!("a folder already exists at {to}"));
+    }
+    fs::rename(src, destination).map_err(|e| e.to_string())
+}
+
+/// Move a whole folder tree into the vault's reversible trash area.
+#[tauri::command]
+pub fn trash_vault_folder(state: State<'_, VaultState>, rel: String) -> Result<(), String> {
+    trash_folder(&root(&state), &rel)
+}
+
+fn trash_folder(root: &Path, rel: &str) -> Result<(), String> {
+    let folder = existing_folder(root, rel)?;
+    let vault_root = fs::canonicalize(root).map_err(|e| e.to_string())?;
+    let trash_path = vault_root.join(TRASH);
+    if fs::symlink_metadata(&trash_path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        return Err("trash directory cannot be a symlink".into());
+    }
+    fs::create_dir_all(&trash_path).map_err(|e| e.to_string())?;
+    let trash = fs::canonicalize(trash_path).map_err(|e| e.to_string())?;
+    if !trash.starts_with(&vault_root) {
+        return Err("trash directory is outside the vault".into());
+    }
+    let destination = trash.join(folder.file_name().ok_or("invalid folder name")?);
+    if fs::symlink_metadata(&destination).is_ok() {
+        return Err(format!("a folder already exists in the trash: {rel}"));
+    }
+    fs::rename(folder, destination).map_err(|e| e.to_string())
+}
 
 /// Create an empty folder in the vault.
 ///
@@ -364,8 +474,44 @@ mod tests {
     fn tmp(name: &str) -> PathBuf {
         let dir = env::temp_dir().join(format!("companion-vault-test-{name}"));
         let _ = fs::remove_dir_all(&dir);
+
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+    #[test]
+    fn rename_folder_preserves_nested_files_and_rejects_invalid_destinations() {
+        let root = tmp("rename-folder");
+        fs::create_dir_all(root.join("Projects/Notes")).unwrap();
+        fs::write(root.join("Projects/Notes/a.md"), "one").unwrap();
+        rename_folder(&root, "Projects", "Archive").unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join("Archive/Notes/a.md")).unwrap(),
+            "one"
+        );
+        assert!(rename_folder(&root, "Archive", "Archive/Nested").is_err());
+        assert!(rename_folder(&root, "", "Renamed").is_err());
+        assert!(rename_folder(&root, "Archive", "../outside").is_err());
+        fs::create_dir_all(root.join("Existing")).unwrap();
+        assert!(rename_folder(&root, "Archive", "Existing").is_err());
+        assert!(root.join("Archive/Notes/a.md").exists());
+    }
+
+    #[test]
+    fn trash_folder_preserves_tree_and_rejects_root_escape_and_collision() {
+        let root = tmp("trash-folder");
+        fs::create_dir_all(root.join("Projects/Notes")).unwrap();
+        fs::write(root.join("Projects/Notes/a.md"), "one").unwrap();
+        trash_folder(&root, "Projects").unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join(".trash/Projects/Notes/a.md")).unwrap(),
+            "one"
+        );
+        fs::create_dir_all(root.join("Projects")).unwrap();
+        fs::write(root.join("Projects/b.md"), "two").unwrap();
+        assert!(trash_folder(&root, "Projects").is_err());
+        assert!(trash_folder(&root, "").is_err());
+        assert!(trash_folder(&root, "../outside").is_err());
+        assert!(root.join("Projects/b.md").exists());
     }
 
     #[test]

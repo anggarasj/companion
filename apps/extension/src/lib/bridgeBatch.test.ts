@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Analysis, Meeting } from '@meetcc/shared';
-import { toBridgeBatch } from './bridgeBatch';
+import { toBridgeBatch, toDocumentBridgeBatch } from './bridgeBatch';
 
 const meeting = (over: Partial<Meeting> = {}): Meeting => ({
   id: 'abc-defg-hij#1787918400000',
@@ -51,6 +51,12 @@ describe('toBridgeBatch', () => {
     expect(toBridgeBatch(meeting(), 0, analysis).markdown).toContain('Ringkasan rapat.');
     expect(toBridgeBatch(meeting(), 1, analysis).markdown).toBeUndefined();
   });
+  it('exports transcript entries without a summary', () => {
+    const batch = toBridgeBatch(meeting(), 0, null, true);
+    expect(batch.entries.map((entry) => entry.text)).toEqual(['baris satu', 'baris dua']);
+    expect(batch.markdown).toBeUndefined();
+    expect(batch.snapshot).toBe(true);
+  });
 });
 
 describe('toBridgeBatch resend', () => {
@@ -77,3 +83,26 @@ describe('toBridgeBatch resend', () => {
     expect(toBridgeBatch(meeting({ tags: ['vault'] }), 0).tags).toEqual(['vault']);
   });
 });
+describe('toDocumentBridgeBatch', () => {
+  it('creates a separate idempotent manual note for the selected output without captions', () => {
+    const document = toDocumentBridgeBatch(
+      meeting({ tags: ['architecture'] }),
+      'notulen',
+      'Quarterly architecture sync',
+      'Notulen',
+      '# Decisions\n\nPakai read replica.',
+      '2026-09-29T10:00:00.000Z',
+    )
+
+    expect(document.roomId).toBe('abc-defg-hij-document-notulen')
+    expect(document.sessionKey).toBe('abc-defg-hij-document-notulen#2026-08-28T14:00:00+07:00')
+    expect(document.platform).toBe('manual')
+    expect(document.entries).toEqual([])
+    expect(document.markdown).toContain('# Quarterly architecture sync — Notulen')
+    expect(document.markdown).toContain('Pakai read replica.')
+    expect(document.replaceBody).toBe(true)
+    expect(document.snapshot).toBe(true)
+    expect(document.includeTranscript).toBe(false)
+    expect(document.tags).toEqual(['architecture', 'dokumen', 'notulen'])
+  })
+})

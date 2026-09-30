@@ -85,7 +85,7 @@ jobs:
         run: npm run build -w @meetcc/desktop
 
       - name: Build companion-desktop
-        run: cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml
+        run: make build-native-host && cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml
 
       # Inside Xvfb on Linux: window event loop runs in virtual display
       - name: Run desktop smoke (Linux)

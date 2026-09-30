@@ -117,6 +117,21 @@ jobs:
       #
       # No --features wdio: the WebDriver plugin is test-only and must not be
       # in anything a user installs.
+      - name: Build native-messaging host sidecar
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAURI_CONFIG='{"bundle":{"externalBin":[]}}' cargo build \
+            --manifest-path apps/desktop/src-tauri/Cargo.toml \
+            --bin companion-native-host \
+            --release \
+            --target "${{ matrix.target }}"
+          suffix=""
+          if [[ "${{ runner.os }}" == "Windows" ]]; then suffix=".exe"; fi
+          mkdir -p apps/desktop/src-tauri/binaries
+          cp "apps/desktop/src-tauri/target/${{ matrix.target }}/release/companion-native-host${suffix}" \
+             "apps/desktop/src-tauri/binaries/companion-native-host-${{ matrix.target }}${suffix}"
+
       - name: Build the desktop bundles
         run: npx tauri build --target ${{ matrix.target }}
         working-directory: apps/desktop

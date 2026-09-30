@@ -69,6 +69,7 @@ pub fn run() {
         // whose folder is gone falls back to the default instead of stranding
         // the window on an error.
         .setup(|app| {
+            install::migrate_existing_bridges();
             let config_dir = app.path().app_config_dir()?;
             let root = vault::startup_root(&config_dir);
             if let Err(e) = vault::ensure_root(&root) {
@@ -110,6 +111,8 @@ pub fn run() {
             vault::open_external,
             vault::move_vault_file,
             vault::create_vault_folder,
+            vault::rename_vault_folder,
+            vault::trash_vault_folder,
             vault::list_vault_folders,
             vault::list_vault,
             vault::read_vault_file,

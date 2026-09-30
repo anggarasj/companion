@@ -36,6 +36,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "externalBin": ["binaries/companion-native-host"],
     "createUpdaterArtifacts": true
   },
   "plugins": {

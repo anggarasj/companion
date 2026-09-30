@@ -5,6 +5,7 @@ import {
   cleanTranscript,
   createClient,
   createRateLimiter,
+  DOC_META,
   generateDiagrams,
   validateSettings,
 } from '@meetcc/ai';
@@ -25,7 +26,7 @@ import { describeG3, g3Rollup } from '@meetcc/exporters/g3';
 import { obsidianVault } from '@meetcc/exporters/obsidian';
 import { loadSettingsForAI } from './lib/aiSettings';
 import { makeZip } from './lib/zip';
-import { toBridgeBatch } from './lib/bridgeBatch';
+import { toBridgeBatch, toDocumentBridgeBatch } from './lib/bridgeBatch';
 import { classifyBridgeError } from './lib/bridgeError';
 import { getStore, handleDb, refreshHighlights, syncIndex } from './db';
 import {
@@ -45,11 +46,13 @@ import {
   loadChat,
   loadClean,
   getMeetingTags,
+  loadDocs,
   getMiniContexts,
   isLive,
   loadMeetings,
   loadSettings,
   resolveSession,
+  roomIdOf,
   sanitizeRoomId,
   saveChat,
   saveClean,
@@ -63,6 +66,7 @@ import {
   type ChatMessage,
   type DocType,
   type Meeting,
+  type TimelineItem,
 } from '@meetcc/shared';
 
 // 6 AI runs per 10 minutes: a meeting sweep can never stampede a provider
@@ -342,12 +346,41 @@ const docGenDeps: DocGenDeps = {
   now: () => new Date().toISOString(),
 };
 
+function resolveTimelineSelection(
+  value: unknown,
+  analysis: Analysis | null,
+): { topics?: TimelineItem[]; error?: string } {
+  if (value === undefined) return {}
+  if (!Array.isArray(value) || !value.length || !analysis) {
+    return { error: t('ext.docs.timelineSelectionInvalid') }
+  }
+  const topics: TimelineItem[] = []
+  const seen = new Set<number>()
+  for (const index of value) {
+    if (
+      typeof index !== 'number' ||
+      !Number.isInteger(index) ||
+      index < 0 ||
+      index >= analysis.timeline.length
+    ) {
+      return { error: t('ext.docs.timelineSelectionInvalid') }
+    }
+    if (seen.has(index)) continue
+    seen.add(index)
+    topics.push(analysis.timeline[index])
+  }
+  return topics.length ? { topics } : { error: t('ext.docs.timelineSelectionInvalid') }
+}
+
 async function handleGenerateDoc(
   id: string,
   docType: DocType,
   templateId?: string,
+  timelineIndices?: unknown,
 ): Promise<{ ok: true; content: string } | { ok: false; error: string }> {
-  const res = await runDocGen(id, docType, templateId, docGenDeps);
+  const selection = resolveTimelineSelection(timelineIndices, await analysisOf(id))
+  if (selection.error) return { ok: false, error: selection.error }
+  const res = await runDocGen(id, docType, templateId, docGenDeps, selection.topics)
   return res.ok ? res : { ok: false, error: res.error };
 }
 
@@ -537,11 +570,12 @@ function handleBridgeSend(
 async function deliverToDesktop(
   meeting: Meeting,
   force = false,
+  includeSummary = true,
 ): Promise<{ ok: boolean; error?: string }> {
   const key = BRIDGE_SENT_KEY(meeting.id);
   const sent = Number((await chrome.storage.local.get(key))[key] ?? 0);
   if (!force && sent >= meeting.entries.length) return { ok: true };
-  const record = await getAnalysis(meeting.id);
+  const record = includeSummary ? await getAnalysis(meeting.id) : null;
   const fromSent = force && sent >= meeting.entries.length ? 0 : sent;
   const batch = toBridgeBatch(
     meeting,
@@ -553,28 +587,82 @@ async function deliverToDesktop(
     batch.operationId = `${meeting.id}:manual-${Date.now()}`;
   }
   const res = await handleBridgeSend(batch);
-  if (!res.ok) {
-    // Still never blocks capture — but a silent return was why an enabled
-    // bridge could do nothing for weeks with no trace anywhere. Recorded once
-    // per worker so a permanently missing host cannot flood the audit log.
+  const error = nativeMessageError(res);
+  if (error) {
     if (!bridgeErrorLogged) {
       bridgeErrorLogged = true;
-      // spike-native-messaging-installer.md GO condition #4: keep the three
-      // distinct failure classes distinguishable in the audit log instead of
-      // one opaque string, so "host not installed" doesn't get confused with
-      // "installed under the wrong extension id" during troubleshooting.
       await appendAudit(
         'bridge.error',
-        `[${classifyBridgeError(res.error)}] ${res.error ?? 'native-host-error'}`,
+        `[${classifyBridgeError(error)}] ${error}`,
       );
     }
-    return { ok: false, error: res.error };
+    return { ok: false, error };
   }
   bridgeErrorLogged = false;
   await chrome.storage.local.set({ [key]: meeting.entries.length });
   await appendAudit('bridge.send', `${meeting.id}: ${batch.entries.length} baris`);
   return { ok: true };
 }
+
+function nativeMessageError(
+  response: { ok: boolean; error?: string; data?: unknown },
+): string | undefined {
+  if (!response.ok) return response.error ?? 'native-host-error';
+  if (!response.data || typeof response.data !== 'object') return undefined;
+  const reply = response.data as { status?: unknown; error?: unknown };
+  if (reply.status !== 'error') return undefined;
+  return typeof reply.error === 'string' ? reply.error : 'native-host-error';
+}
+
+async function deliverTranscriptToDesktop(id: string): Promise<{ ok: boolean; error?: string }> {
+  const meeting = await loadMeetingForAI(id);
+  if (!meeting) return { ok: false, error: t('ext.err.meetingNotFound') };
+  if (!meeting.entries.length) return { ok: false, error: t('ext.err.emptyTranscription') };
+  return deliverToDesktop(meeting, true, false);
+}
+
+function isDocType(value: unknown): value is DocType {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(DOC_META, value);
+}
+
+async function exportDocumentToDesktop(
+  id: string,
+  docType: DocType,
+  generatedAt: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const [meeting, documents, title] = await Promise.all([
+    loadMeetingForAI(id),
+    loadDocs(id),
+    getTitle(id),
+  ]);
+  if (!meeting) return { ok: false, error: t('ext.err.meetingNotFound') };
+  const document = documents[docType];
+  if (!document?.content.trim()) return { ok: false, error: t('ext.docs.noOutput') };
+  if (document.generatedAt !== generatedAt) {
+    return { ok: false, error: t('ext.docs.documentChanged') };
+  }
+  const batch = toDocumentBridgeBatch(
+    meeting,
+    docType,
+    title.trim() || roomIdOf(id),
+    DOC_META[docType].label,
+    document.content,
+    document.generatedAt,
+  );
+  const response = await handleBridgeSend(batch);
+  const error = nativeMessageError(response);
+  if (error) {
+    if (!bridgeErrorLogged) {
+      bridgeErrorLogged = true;
+      await appendAudit('bridge.error', `[${classifyBridgeError(error)}] ${error}`);
+    }
+    return { ok: false, error };
+  }
+  bridgeErrorLogged = false;
+  await appendAudit('bridge.document.send', `${id}: ${docType}`);
+  return { ok: true };
+}
+
 
 // The worker is its own context: the dashboard applying a language says
 // nothing about the errors this file throws. Read it at startup and follow the
@@ -598,12 +686,13 @@ function handleBridgeMessage(msg: Record<string, unknown>): Promise<unknown> | n
   if (msg.type === 'bridge-ping') {
     return handleBridgeSend({ type: 'ping' });
   }
-  if (msg.type === 'bridge-deliver-meeting' && typeof msg.meetingId === 'string') {
-    return loadMeetings().then((meetings) => {
-      const meeting = meetings.find((m) => m.id === msg.meetingId);
-      if (!meeting) return { ok: false, error: 'Meeting not found' };
-      return deliverToDesktop(meeting, true);
-    });
+  if (msg.type === 'bridge-deliver-transcript' && typeof msg.meetingId === 'string') {
+    return deliverTranscriptToDesktop(msg.meetingId);
+  }
+  if (msg.type === 'bridge-export-document' && typeof msg.meetingId === 'string') {
+    return isDocType(msg.docType) && typeof msg.generatedAt === 'string'
+      ? exportDocumentToDesktop(msg.meetingId, msg.docType, msg.generatedAt)
+      : Promise.resolve({ ok: false, error: t('ext.docs.invalidType') });
   }
   return null;
 }
@@ -674,7 +763,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true; // async response
   }
   if (msg?.type === 'generate-doc' && msg.meetingId && msg.docType) {
-    handleGenerateDoc(msg.meetingId, msg.docType as DocType, msg.templateId)
+    handleGenerateDoc(msg.meetingId, msg.docType as DocType, msg.templateId, msg.timelineIndices)
       .then(sendResponse)
       .catch((e) => sendResponse({ ok: false, error: (e as Error).message }));
     return true; // async response

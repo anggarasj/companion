@@ -1,8 +1,8 @@
 .PHONY: help install \
 	check-all check-all-js ci ci-js ci-rust test test-coverage test-vault typecheck typecheck-desktop lint \
 	rust-fmt rust-fmt-fix rust-lint rust-check \
-	build build-extension build-desktop build-host build-mcp build-sync \
-	smoke smoke-desktop smoke-mcp smoke-sync \
+	build build-extension build-desktop build-host build-native-host build-mcp build-sync \
+	smoke smoke-desktop smoke-host smoke-mcp smoke-sync \
 	pack pack-source sign-firefox lint-firefox sync-start \
 	dev dev-extension dev-desktop tauri tauri-dev tauri-bundle native-host-install
 
@@ -17,6 +17,8 @@
 # same target, so a green local run means a green pipeline.
 
 DESKTOP_CRATE := apps/desktop/src-tauri
+RUST_HOST_TARGET = $(shell rustc -vV | sed -n 's/^host: //p')
+NATIVE_HOST_BINARY = companion-native-host$(if $(findstring windows,$(RUST_HOST_TARGET)),.exe,)
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS=":.*## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -75,13 +77,13 @@ rust-fmt-fix: ## cargo fmt (apply)
 
 # -D warnings, or this is not a gate: a warning that never fails is a warning
 # nobody reads.
-rust-lint: ## clippy over all targets, warnings are errors
+rust-lint: build-native-host ## clippy over all targets, warnings are errors
 	cd $(DESKTOP_CRATE) && cargo clippy --all-targets -- -D warnings
 
 # Both ways round: `wdio` is compiled out of a release build, so nothing else
 # would ever tell us that the feature still builds until someone tries to run
 # the desktop suite.
-rust-check: ## cargo check, with and without the test-only wdio feature
+rust-check: build-native-host ## cargo check, with and without the test-only wdio feature
 	cd $(DESKTOP_CRATE) && cargo check
 	cd $(DESKTOP_CRATE) && cargo check --features wdio
 
@@ -98,6 +100,12 @@ build-desktop: ## Build the desktop frontend (tsc + vite)
 
 build-host: ## Bundle the native-messaging host
 	npm run build:host -w @meetcc/desktop
+
+build-native-host: ## Build and stage the headless native-messaging sidecar for this target
+	cd $(DESKTOP_CRATE) && TAURI_CONFIG='{"bundle":{"externalBin":[]}}' cargo build --bin companion-native-host
+	mkdir -p $(DESKTOP_CRATE)/binaries
+	cp $(DESKTOP_CRATE)/target/debug/$(NATIVE_HOST_BINARY) \
+		$(DESKTOP_CRATE)/binaries/companion-native-host-$(RUST_HOST_TARGET)$(if $(findstring windows,$(RUST_HOST_TARGET)),.exe,)
 
 build-mcp: ## Build the MCP server bin
 	npm run build -w @meetcc/mcp
@@ -133,13 +141,13 @@ dev-extension: ## Extension dev server
 dev-desktop: ## Desktop Vite dev server only (no window; use tauri-dev for that)
 	npm run dev -w @meetcc/desktop
 
-tauri: ## Build the desktop app (release binary, no installer)
+tauri: build-native-host ## Build the desktop app (release binary, no installer)
 	cd apps/desktop && npx tauri build --no-bundle
 
-tauri-bundle: ## Build the desktop app with installers (.app/.dmg, .msi, .AppImage)
+tauri-bundle: build-native-host ## Build the desktop app with installers (.app/.dmg, .msi, .AppImage)
 	cd apps/desktop && npx tauri build
 
-tauri-dev: ## Run the desktop app in dev mode (vite + window)
+tauri-dev: build-native-host ## Run the desktop app in dev mode (vite + window)
 	cd apps/desktop && npx tauri dev
 
 ## ---- native host ----
@@ -163,16 +171,15 @@ smoke: build-host ## Smoke the native host: two identical frames in one write
 		echo "HOST SMOKE OK"; \
 		rm -rf $$tmp
 
-rust-test: ## cargo test for the desktop crate
+rust-test: build-native-host ## cargo test for the desktop crate
 	cd apps/desktop/src-tauri && cargo test
 
-smoke-desktop: build-desktop ## The desktop binary starts Tauri, opens a window, and exits cleanly
+smoke-desktop: build-desktop build-native-host ## The desktop binary starts Tauri, opens a window, and exits cleanly
 	@cargo build --quiet --manifest-path apps/desktop/src-tauri/Cargo.toml
 	@./scripts/danger_desktop.sh
 
-smoke-host: ## The desktop binary answers native messaging in --native-host mode
-	@cd apps/desktop/src-tauri && cargo build --quiet
-	@node scripts/smoke-host-rs.mjs apps/desktop/src-tauri/target/debug/companion-desktop
+smoke-host: build-native-host ## The sidecar answers native messaging over framed stdio
+	@node scripts/smoke-host-rs.mjs apps/desktop/src-tauri/target/debug/$(NATIVE_HOST_BINARY)
 
 smoke-mcp: build-mcp ## The built MCP bin answers over stdio
 	npm run smoke -w @meetcc/mcp

@@ -4,7 +4,7 @@
 // service worker's business (see `deliverToDesktop` in background.ts); this
 // only decides what one delivery looks like.
 import { toMarkdown } from '@meetcc/exporters/markdown';
-import { participants, roomIdOf, startedAt, type Analysis, type Meeting } from '@meetcc/shared';
+import { participants, roomIdOf, startedAt, type Analysis, type DocType, type Meeting } from '@meetcc/shared';
 import type { BridgeBatch } from '@meetcc/vault';
 
 /**
@@ -40,5 +40,34 @@ export function toBridgeBatch(
     ...(resend && analysis ? { replaceBody: true } : {}),
     ...(resend && from === 0 ? { snapshot: true } : {}),
     ...(meeting.tags?.length ? { tags: meeting.tags } : {}),
+  };
+}
+
+/** A generated document is a separate desktop note, never a replacement for
+ *  the meeting's transcript/summary note. Re-exporting the same version is
+ *  idempotent; a newly generated version updates that document's note. */
+export function toDocumentBridgeBatch(
+  meeting: Meeting,
+  docType: DocType,
+  title: string,
+  label: string,
+  markdown: string,
+  generatedAt: string,
+): BridgeBatch {
+  const roomId = `${roomIdOf(meeting.id)}-document-${docType}`;
+  const start = startedAt(meeting) ?? generatedAt;
+  return {
+    operationId: `${meeting.id}:document:${docType}:${generatedAt}`,
+    sessionKey: `${roomId}#${start}`,
+    roomId,
+    platform: 'manual',
+    startedAt: start,
+    participants: participants(meeting),
+    entries: [],
+    markdown: `# ${title} — ${label}\n\n${markdown}`,
+    replaceBody: true,
+    snapshot: true,
+    includeTranscript: false,
+    tags: [...(meeting.tags ?? []), 'dokumen', docType],
   };
 }
