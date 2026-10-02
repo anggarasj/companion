@@ -24,7 +24,7 @@ make lint           # eslint
 make build          # bundle extension, MCP, sync-server
 make smoke          # Node host: framing + dedupe over stdio
 make smoke-desktop  # desktop binary window smoke: event loop + vault init
-make smoke-host     # desktop binary in --native-host mode: framing + spool
+make smoke-host     # desktop binary with a Chrome origin arg: framing + spool
 make smoke-mcp      # built MCP bin answers over stdio
 make smoke-sync     # built sync bin answers over HTTP
 
@@ -165,10 +165,9 @@ Things about it that are easy to get wrong:
   — the desktop screen will register the default location and report success.
 - **What the CLI registers is a wrapper, not the `.mjs`.** A browser started
   from Finder inherits no shell PATH, so `#!/usr/bin/env node` finds nothing.
-  The wrapper execs an absolute node resolved at install time. The desktop host
-  has no such problem: the manifest names the app binary and passes
-  `--native-host`, which `main.rs` checks *before* Tauri starts — without that
-  argument the browser would open a window and never speak the protocol.
+  The desktop host has no such problem: the manifest names the app binary and
+  Chromium supplies the extension origin as `argv[1]`. `main.rs` detects that
+  before Tauri starts; launches without that origin open the desktop window.
 - **A ping must never write anything.** Both hosts answer `{type:'ping'}`
   before reaching `applyBatch`, which is what the "Test connection" button
   uses. A host that lacked the branch once fell through to the vault writer and

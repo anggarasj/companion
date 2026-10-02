@@ -4,10 +4,13 @@
 // transcript sidecar path since the bridge first wrote one; the editor simply
 // never showed any of it, so the inbox could say "3 participants" and opening
 // the note told you nothing about who they were.
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState, type FormEvent } from 'react'
 import { formatDateTime, t } from '@meetcc/shared/i18n'
 import { copyText } from './clipboard'
 import type { Vault, VaultNote } from '@meetcc/vault'
+import { askMeeting, createClient, resolveConfig, validateSettings, MAX_HISTORY_TURNS } from '@meetcc/ai'
+import type { ChatMessage, Meeting } from '@meetcc/shared/types'
+import { loadAiSettings } from './aiSettings'
 import { Button, TextInput, useToast } from '@meetcc/ui'
 
 /**
@@ -66,9 +69,37 @@ export function MeetingMeta({ note, vault }: { note: VaultNote; vault: Vault | n
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState<string | null>(null)
+  const [question, setQuestion] = useState('')
+  const [history, setHistory] = useState<ChatMessage[]>([])
+  const [asking, setAsking] = useState(false)
+  const [askError, setAskError] = useState<string | null>(null)
+  const currentNoteId = useRef(note.id)
+  const transcriptRequest = useRef(0)
+  const askRequest = useRef(0)
+
+  // Invalidate in render so a completion from the previous note cannot land
+  // in the interval before the reset effect runs.
+  if (currentNoteId.current !== note.id) {
+    currentNoteId.current = note.id
+    transcriptRequest.current += 1
+    askRequest.current += 1
+  }
 
   const participants = note.participants ?? []
   const url = dashboardUrl(note.sessionKey)
+
+  useLayoutEffect(() => {
+    transcriptRequest.current += 1
+    askRequest.current += 1
+    setLines(null)
+    setOpen(false)
+    setBusy(false)
+    setFailed(null)
+    setQuestion('')
+    setHistory([])
+    setAsking(false)
+    setAskError(null)
+  }, [note.id])
 
   // Read on demand, not with the note: a long meeting's sidecar is large and
   // opening a note must not pay for a transcript nobody asked to see.
@@ -76,14 +107,19 @@ export function MeetingMeta({ note, vault }: { note: VaultNote; vault: Vault | n
     if (open) return setOpen(false)
     setOpen(true)
     if (lines || !note.transcript || !vault) return
+    const requestedNoteId = note.id
+    const requestId = ++transcriptRequest.current
+    const isCurrent = () =>
+      currentNoteId.current === requestedNoteId && transcriptRequest.current === requestId
     setBusy(true)
+    setFailed(null)
     try {
       const raw = await vault.io.readFile(vault.io.join(vault.io.root, note.transcript))
-      setLines(parseTranscript(raw))
+      if (isCurrent()) setLines(parseTranscript(raw))
     } catch (e) {
-      setFailed(String(e))
+      if (isCurrent()) setFailed(String(e))
     } finally {
-      setBusy(false)
+      if (isCurrent()) setBusy(false)
     }
   }
 
@@ -97,6 +133,59 @@ export function MeetingMeta({ note, vault }: { note: VaultNote; vault: Vault | n
         ? toast('success', t('desktop.toast.linkCopied'))
         : toast('error', t('desktop.toast.copyFailed')),
     )
+  }
+  const ask = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const prompt = question.trim()
+    if (!prompt || !lines?.length || asking) return
+    const requestedNoteId = note.id
+    const requestId = ++askRequest.current
+    const isCurrent = () =>
+      currentNoteId.current === requestedNoteId && askRequest.current === requestId
+    setAsking(true)
+    setAskError(null)
+    try {
+      const settings = await loadAiSettings()
+      if (!isCurrent()) return
+      const problem = validateSettings(settings)
+      if (problem) throw new Error(problem)
+      const startedAt = note.startedAt || lines[0].time
+      const meeting: Meeting = {
+        id: note.sessionKey,
+        meta: { id: note.sessionKey, startedAt, lastSeenAt: lines[lines.length - 1].time || startedAt },
+        entries: lines,
+      }
+      const result = await askMeeting(
+        createClient(resolveConfig(settings)),
+        meeting,
+        null,
+        history,
+        prompt,
+      )
+      if (isCurrent()) {
+        const time = new Date().toISOString()
+        const nextHistory: ChatMessage[] = [
+          ...history,
+          { role: 'user', content: prompt, time },
+          { role: 'assistant', content: result.answer, time, result },
+        ]
+        setHistory(nextHistory.slice(-MAX_HISTORY_TURNS))
+        setQuestion('')
+      }
+    } catch (e) {
+      if (isCurrent()) setAskError((e as Error).message)
+    } finally {
+      if (isCurrent()) setAsking(false)
+    }
+  }
+
+
+  let latestAnswer: ChatMessage | undefined
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    if (history[index].result) {
+      latestAnswer = history[index]
+      break
+    }
   }
 
   return (
@@ -144,6 +233,36 @@ export function MeetingMeta({ note, vault }: { note: VaultNote; vault: Vault | n
               <span>{l.text}</span>
             </p>
           ))}
+          {!!lines?.length && (
+            <div className="mm-ask">
+              <form className="mm-ask-form" onSubmit={(event) => void ask(event)}>
+                <label htmlFor={`meeting-question-${note.id}`}>{t('desktop.meeting.askQuestion')}</label>
+                <div className="mm-ask-row">
+                  <TextInput
+                    id={`meeting-question-${note.id}`}
+                    value={question}
+                    placeholder={t('desktop.meeting.askPlaceholder')}
+                    onChange={(event) => setQuestion(event.target.value)}
+                    disabled={asking}
+                  />
+                  <Button type="submit" disabled={asking || !question.trim()}>
+                    {asking ? t('desktop.meeting.asking') : t('desktop.meeting.ask')}
+                  </Button>
+                </div>
+              </form>
+              {askError && <p className="mm-ask-error" role="alert">{askError}</p>}
+              {history.map((message, index) => (
+                <div key={`${message.time}-${index}`} className={`mm-answer mm-${message.role}`}>
+                  <p>{message.content}</p>
+                </div>
+              ))}
+              {latestAnswer?.result?.evidence.slice(0, 4).map((evidence, sourceIndex) => (
+                <p key={`${evidence.startTime}-${sourceIndex}`} className="mm-evidence">
+                  {evidence.startTime.slice(11, 16)} · {evidence.speakers.join(', ')} — {evidence.preview}
+                </p>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </section>

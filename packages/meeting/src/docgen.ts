@@ -7,6 +7,7 @@ import type {
   DocType,
   Meeting,
   StoredDoc,
+  TimelineItem,
 } from '@meetcc/shared';
 import { createInFlight, docGenKey } from './inflight';
 
@@ -48,10 +49,12 @@ export function runDocGen(
   docType: DocType,
   templateId: string | undefined,
   deps: DocGenDeps,
+  focusTopics?: readonly TimelineItem[],
 ): Promise<DocGenResult> {
-  return docRuns.run(docGenKey(id, docType, templateId), () =>
-    runDocGenInner(id, docType, templateId, deps),
-  );
+  const scope = focusTopics?.length ? JSON.stringify(focusTopics) : ''
+  return docRuns.run(`${docGenKey(id, docType, templateId)}:${scope}`, () =>
+    runDocGenInner(id, docType, templateId, deps, focusTopics),
+  )
 }
 
 async function runDocGenInner(
@@ -59,6 +62,7 @@ async function runDocGenInner(
   docType: DocType,
   templateId: string | undefined,
   deps: DocGenDeps,
+  focusTopics?: readonly TimelineItem[],
 ): Promise<DocGenResult> {
   const startedAt = deps.now();
   try {
@@ -93,6 +97,7 @@ async function runDocGenInner(
         });
       },
       template,
+      focusTopics,
     );
     await deps.saveDoc(id, docType, {
       content,

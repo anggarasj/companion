@@ -132,6 +132,63 @@ body[data-theme='light'] {
   background: var(--ui-accent-dim);
 }
 
+.ui-radio-group {
+  min-width: 0;
+  margin: 0;
+  padding: 0 16px 8px;
+  border: 0;
+}
+
+.ui-radio-group legend {
+  margin-bottom: 6px;
+  padding: 0;
+  color: var(--ui-text-dim);
+  font: 600 10px/1.2 var(--ui-font-body);
+}
+
+.ui-radio-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ui-radio-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid var(--ui-hairline-2);
+  border-radius: 8px;
+  background: var(--ui-panel);
+  color: var(--ui-text-dim);
+  font: 600 12px/1 var(--ui-font-body);
+  cursor: pointer;
+}
+
+.ui-radio-option input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--ui-accent);
+}
+
+.ui-radio-option.is-selected {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-dim);
+  color: var(--ui-accent);
+}
+
+.ui-radio-option:focus-within {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 1px;
+}
+
+.ui-radio-option.is-disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .ui-toasts {
   position: fixed;
   right: 14px;

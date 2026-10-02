@@ -97,13 +97,15 @@ fn handle(spool: &Path, seq: u64, body: &[u8]) -> String {
 pub fn run(spool: &Path) {
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
-    let mut input = stdin.lock();
-    let mut output = stdout.lock();
+    run_io(spool, &mut stdin.lock(), &mut stdout.lock());
+}
+
+fn run_io(spool: &Path, input: &mut impl Read, output: &mut impl Write) {
     let mut seq = 0u64;
-    while let Ok(Some(body)) = read_frame(&mut input) {
+    while let Ok(Some(body)) = read_frame(input) {
         let reply = handle(spool, seq, &body);
         seq += 1;
-        if write_frame(&mut output, reply.as_bytes()).is_err() {
+        if write_frame(output, reply.as_bytes()).is_err() {
             return;
         }
     }
@@ -189,6 +191,20 @@ mod tests {
         out
     }
 
+    #[test]
+    fn stdio_loop_emits_only_a_framed_json_reply() {
+        let dir = tmpdir("stdio-ping");
+        let mut input = std::io::Cursor::new(frame(r#"{"type":"ping"}"#));
+        let mut output = Vec::new();
+
+        run_io(&dir, &mut input, &mut output);
+
+        let len = u32::from_le_bytes(output[..4].try_into().unwrap()) as usize;
+        assert_eq!(output.len(), 4 + len);
+        let reply: serde_json::Value = serde_json::from_slice(&output[4..]).unwrap();
+        assert_eq!(reply, serde_json::json!({"status": "ok", "pong": true}));
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
+    }
     #[test]
     fn reads_two_batches_delivered_in_one_write() {
         // Chrome coalesces messages, so the framing has to carry the split.

@@ -42,6 +42,8 @@ export function NoteTree({
   onOpen,
   onMove,
   onAddFolder,
+  onRenameFolder,
+  onTrashFolder,
 }: {
   root: TreeFolder
   selected: string | null
@@ -50,8 +52,11 @@ export function NoteTree({
   onMove: (rel: string, folder: string) => void
   /** Start naming a new folder inside this one. '' is the vault root. */
   onAddFolder: (folder: string) => void
+  onRenameFolder: (folder: string, name: string) => void
+  onTrashFolder: (folder: string) => void
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(loadCollapsed)
+  const [renaming, setRenaming] = useState<string | null>(null)
   // The folder currently under a dragged note, so the drop target is visible.
   // Without it the whole gesture is invisible and you are guessing.
   const [over, setOver] = useState<string | null>(null)
@@ -75,34 +80,70 @@ export function NoteTree({
     return (
       <li key={folder.path}>
         <div className="tree-folder-row">
+          {renaming === folder.path ? (
+            <input
+              className="search"
+              autoFocus
+              aria-label={t('desktop.vault.folderName')}
+              defaultValue={folder.name}
+              onBlur={(event) => {
+                const name = event.currentTarget.value.trim()
+                setRenaming(null)
+                if (name && name !== folder.name) onRenameFolder(folder.path, name)
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.currentTarget.blur()
+                if (event.key === 'Escape') setRenaming(null)
+              }}
+            />
+          ) : (
+            <Button
+              type="button"
+              className={over === folder.path ? 'tree-folder drop-over' : 'tree-folder'}
+              aria-expanded={!isCollapsed}
+              onClick={() => toggle(folder.path)}
+              onDragOver={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setOver(folder.path)
+              }}
+              onDragLeave={() => setOver((path) => (path === folder.path ? null : path))}
+              onDrop={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setOver(null)
+                const rel = e.dataTransfer.getData('text/plain')
+                if (rel) onMove(rel, folder.path)
+              }}
+            >
+              <svg
+                className={isCollapsed ? 'tree-caret' : 'tree-caret open'}
+                viewBox="0 0 16 16"
+                aria-hidden="true"
+              >
+                <path d="M6 4l4 4-4 4" />
+              </svg>
+              <span className="tree-name">{folder.name}</span>
+              {total > 0 && <span className="tree-count">{total}</span>}
+            </Button>
+          )}
           <Button
             type="button"
-            className={over === folder.path ? 'tree-folder drop-over' : 'tree-folder'}
-            aria-expanded={!isCollapsed}
-            onClick={() => toggle(folder.path)}
-            onDragOver={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              setOver(folder.path)
-            }}
-            onDragLeave={() => setOver((path) => (path === folder.path ? null : path))}
-            onDrop={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              setOver(null)
-              const rel = e.dataTransfer.getData('text/plain')
-              if (rel) onMove(rel, folder.path)
-            }}
+            className="tree-add"
+            aria-label={t('desktop.vault.renameFolder', { folder: folder.name })}
+            data-tip={t('desktop.vault.renameFolder', { folder: folder.name })}
+            onClick={() => setRenaming(folder.path)}
           >
-            <svg
-              className={isCollapsed ? 'tree-caret' : 'tree-caret open'}
-              viewBox="0 0 16 16"
-              aria-hidden="true"
-            >
-              <path d="M6 4l4 4-4 4" />
-            </svg>
-            <span className="tree-name">{folder.name}</span>
-            {total > 0 && <span className="tree-count">{total}</span>}
+            ✎
+          </Button>
+          <Button
+            type="button"
+            className="tree-add"
+            aria-label={t('desktop.vault.trashFolder', { folder: folder.name })}
+            data-tip={t('desktop.vault.trashFolder', { folder: folder.name })}
+            onClick={() => onTrashFolder(folder.path)}
+          >
+            ×
           </Button>
           <Button
             type="button"

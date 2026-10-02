@@ -50,7 +50,7 @@ const batch = (id) => ({
 
 // Two batches and a ping in ONE write: the browser coalesces messages, and a
 // host that assumes one message per chunk passes every other test there is.
-const res = spawnSync(bin, ['--native-host'], {
+const res = spawnSync(bin, ['chrome-extension://neeapigpheabagekbdfjdekgdicfckpn/'], {
   input: Buffer.concat([frame(batch('op-1')), frame({ type: 'ping' }), frame(batch('op-2'))]),
   env: childEnv,
 });

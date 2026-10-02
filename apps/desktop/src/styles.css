@@ -784,6 +784,34 @@ body {
 .mm-time { font: 10px/1.7 ui-monospace, Menlo, monospace; color: var(--fg-muted); }
 .mm-speaker { color: var(--accent); overflow: hidden; text-overflow: ellipsis; }
 
+.mm-ask {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.mm-ask-form label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+.mm-ask-row {
+  display: flex;
+  gap: 8px;
+}
+
+.mm-ask-row input { flex: 1; min-width: 0; }
+.mm-ask-error { color: var(--danger); font-size: 12px; }
+.mm-answer { margin-top: 10px; font-size: 12px; }
+.mm-user { color: var(--fg-muted); }
+.mm-evidence {
+  margin: 5px 0 0;
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+
 /* A grid, not a wrapping flex row: equal columns keep the four controls the
    same width, and a shared height keeps their boxes on one baseline. Left to
    themselves, a select and a text input measure differently in WebKit and the

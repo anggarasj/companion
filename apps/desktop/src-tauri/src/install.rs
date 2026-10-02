@@ -1,9 +1,4 @@
-// Registering the bridge from the desktop app.
-//
-// The same job `companion install` does from a terminal, for the people that
-// command was never going to reach. It registers **this binary** in
-// `--native-host` mode, so unlike the CLI's Node host there is nothing else to
-// have installed first.
+// Registering the desktop executable as a native-messaging host.
 //
 // It deliberately does not install the extension: that means downloading a
 // release, unzipping it and launching a browser with a dedicated profile, and
@@ -72,37 +67,41 @@ fn home() -> PathBuf {
     PathBuf::from(env::var("HOME").unwrap_or_else(|_| ".".into()))
 }
 
-/// The browsers on this machine, and whether the bridge is registered for each.
+/// The browsers on this machine, and whether a host manifest is present.
 ///
-/// Presence is decided by the profile directory existing: a browser that has
-/// never been run has nothing to register into, and one that is installed but
-/// unused would otherwise be offered and then fail.
+/// Listing is read-only. A CLI registration or a developer extension may use
+/// this host name with a different executable or extension origin.
 #[tauri::command]
 pub fn list_browsers() -> Vec<Browser> {
     let home = home();
     candidates(&home)
         .into_iter()
         .filter(|(_, dir)| dir.is_dir())
-        .map(|(name, dir)| {
-            let manifest = manifest_dir(&dir).join(format!("{HOST_NAME}.json"));
-            Browser {
-                name: name.to_string(),
-                manifest_dir: manifest_dir(&dir).to_string_lossy().into_owned(),
-                registered: manifest.is_file(),
-            }
+        .map(|(name, dir)| Browser {
+            name: name.to_string(),
+            manifest_dir: manifest_dir(&dir).to_string_lossy().into_owned(),
+            registered: is_registered(&dir),
         })
         .collect()
 }
 
-/// The manifest body. Chromium allowlists an origin; this app registers no
-/// Gecko host, because Firefox needs a signed add-on and there is nothing to
-/// point a manifest at yet.
+fn is_registered(browser_root: &Path) -> bool {
+    manifest_dir(browser_root)
+        .join(format!("{HOST_NAME}.json"))
+        .is_file()
+}
+
+/// The manifest body. Chromium supplies the extension origin as argv[1] when
+/// it launches the executable as a native-messaging host.
 fn manifest_json(exe: &str) -> String {
-    format!(
-        "{{\n  \"name\": \"{HOST_NAME}\",\n  \"description\": \"Companion vault capture host\",\n  \
-         \"path\": \"{exe}\",\n  \"type\": \"stdio\",\n  \"args\": [\"--native-host\"],\n  \
-         \"allowed_origins\": [\"chrome-extension://{EXTENSION_ID}/\"]\n}}\n"
-    )
+    serde_json::to_string_pretty(&serde_json::json!({
+        "name": HOST_NAME,
+        "description": "Companion vault capture host",
+        "path": exe,
+        "type": "stdio",
+        "allowed_origins": [format!("chrome-extension://{EXTENSION_ID}/")]
+    }))
+    .expect("native host manifest fields are serializable")
 }
 
 /// Register the bridge for one browser, by its display name.
@@ -113,16 +112,11 @@ pub fn register_bridge(browser: String) -> Result<String, String> {
         .into_iter()
         .find(|(name, _)| *name == browser)
         .ok_or_else(|| format!("unknown browser: {browser}"))?;
-    // The running binary, resolved now: a manifest pointing at a relative name
-    // would be read by a browser that inherits none of this process's context.
-    let exe = env::current_exe()
-        .map_err(|e| e.to_string())?
-        .to_string_lossy()
-        .into_owned();
+    let exe = env::current_exe().map_err(|e| e.to_string())?;
     let target = manifest_dir(&dir);
     fs::create_dir_all(&target).map_err(|e| e.to_string())?;
     let path = target.join(format!("{HOST_NAME}.json"));
-    fs::write(&path, manifest_json(&exe)).map_err(|e| e.to_string())?;
+    fs::write(&path, manifest_json(&exe.to_string_lossy())).map_err(|e| e.to_string())?;
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -167,17 +161,41 @@ mod tests {
     }
 
     #[test]
-    fn the_manifest_names_the_binary_and_the_host_mode() {
-        // Without the `args` entry the browser starts the app normally, which
-        // opens a window and never speaks the protocol.
-        let json = manifest_json("/Applications/Companion Desktop.app/Contents/MacOS/companion");
-        assert!(json.contains("\"args\": [\"--native-host\"]"));
-        assert!(json.contains("/Applications/Companion Desktop.app"));
-        assert!(json.contains(EXTENSION_ID));
-        // It has to parse: a manifest built by string formatting is one typo
-        // away from a browser that reports the host as missing.
+    fn the_manifest_points_to_the_desktop_executable_without_cli_args() {
+        let exe = "/Applications/Companion Desktop.app/Contents/MacOS/companion";
+        let json = manifest_json(exe);
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("manifest is not JSON");
         assert_eq!(parsed["name"], HOST_NAME);
+        assert_eq!(parsed["type"], "stdio");
+        assert_eq!(parsed["path"], exe);
+        assert!(parsed.get("args").is_none());
+        assert_eq!(
+            parsed["allowed_origins"],
+            serde_json::json!([format!("chrome-extension://{EXTENSION_ID}/")])
+        );
+    }
+
+    #[test]
+    fn checking_registration_does_not_rewrite_an_existing_host_manifest() {
+        let root = env::temp_dir().join(format!(
+            "companion-host-registration-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let manifest = manifest_dir(&root).join(format!("{HOST_NAME}.json"));
+        fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+        let original = serde_json::json!({
+            "name": HOST_NAME,
+            "path": "/usr/local/bin/node-host",
+            "type": "stdio",
+            "allowed_origins": ["chrome-extension://developer-id/"]
+        })
+        .to_string();
+        fs::write(&manifest, &original).unwrap();
+
+        assert!(is_registered(&root));
+        assert_eq!(fs::read_to_string(&manifest).unwrap(), original);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

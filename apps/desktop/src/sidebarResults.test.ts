@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { hideCopiedOriginals, inboxSearchResults } from './sidebarResults'
+import { hideCopiedOriginals, inboxSearchResults, isIncomingMeeting } from './sidebarResults'
+type SearchResult = { rel: string; platform: string; tags?: string[] }
 
-type SearchResult = { rel: string; platform: string }
 
 describe('inboxSearchResults', () => {
   it('uses the inbox order when the query is empty', () => {
@@ -22,6 +22,15 @@ describe('inboxSearchResults', () => {
     ]
 
     expect(inboxSearchResults('budget', incoming, matches)).toEqual([matches[1]])
+  })
+  it('excludes generated documents from incoming meetings and search results', () => {
+    const generated: SearchResult & { tags: string[] } = {
+      rel: 'document.md',
+      platform: 'google-meet',
+      tags: ['dokumen', 'notulen'],
+    }
+    expect(isIncomingMeeting(generated)).toBe(false)
+    expect(inboxSearchResults('notulen', [], [generated])).toEqual([])
   })
 })
 

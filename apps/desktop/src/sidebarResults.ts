@@ -1,14 +1,19 @@
 interface SearchableNote {
-  platform: string
+  platform?: string
+  tags?: readonly string[]
 }
 
-/** Search results belong to the active tab; inbox excludes notes written locally. */
+export function isIncomingMeeting(note: SearchableNote): boolean {
+  return Boolean(note.platform && note.platform !== 'manual' && !note.tags?.includes('dokumen'))
+}
+
+/** Search results belong to the active tab; generated documents aren't meetings. */
 export function inboxSearchResults<T extends SearchableNote>(
   query: string,
   incoming: readonly T[],
   matches: readonly T[],
 ): readonly T[] {
-  return query.trim() ? matches.filter((note) => note.platform !== '' && note.platform !== 'manual') : incoming
+  return query.trim() ? matches.filter(isIncomingMeeting) : incoming
 }
 
 interface VaultRow {

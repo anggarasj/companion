@@ -15,7 +15,7 @@ import { saveTarget, settleSaved } from './saveTarget'
 import { loadAutosave } from './editorPrefs'
 import { drainSpool } from './spool'
 import { buildTree, folderPaths, withEmptyFolders } from './tree'
-import { hideCopiedOriginals, inboxSearchResults } from './sidebarResults'
+import { hideCopiedOriginals, inboxSearchResults, isIncomingMeeting } from './sidebarResults'
 import { loadThemePref, type ThemePref } from './theme'
 import { NoteEditor } from './NoteEditor'
 import UpdateBanner from './UpdateBanner'
@@ -477,6 +477,56 @@ export default function App() {
       setNamingFolder(null)
     }
   }
+  async function renameFolder(folder: string, name: string) {
+    if (!vault) return
+    const trimmed = name.trim()
+    if (!trimmed) return
+    const safe = trimmed.replace(/[/\\]/g, '-')
+    const parent = folder.includes('/') ? folder.slice(0, folder.lastIndexOf('/')) : ''
+    const renamed = parent ? `${parent}/${safe}` : safe
+    if (renamed === folder) return
+    try {
+      await invoke('rename_vault_folder', { from: folder, to: renamed })
+      if (selected && (selected === folder || selected.startsWith(`${folder}/`))) {
+        setSelected(`${renamed}${selected.slice(folder.length)}`)
+      }
+      if (target && (target === folder || target.startsWith(`${folder}/`))) {
+        setTarget(`${renamed}${target.slice(folder.length)}`)
+      }
+      await refresh(vault)
+      toast('success', t('desktop.vault.folderRenamed', { name: renamed }))
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
+  function requestTrashFolder(folder: string) {
+    if (!vault) return
+    const containsSelected = selected === folder || selected?.startsWith(`${folder}/`)
+    setConfirm({
+      message: `${t('desktop.vault.confirmTrashFolder', { folder })}${
+        containsSelected && dirty ? ` ${t('desktop.vault.confirmTrashDirty')}` : ''
+      }`,
+      label: t('desktop.vault.trashFolderAction'),
+      run: async () => {
+        guard(async () => {
+          try {
+            await invoke('trash_vault_folder', { rel: folder })
+            if (selected === folder || selected?.startsWith(`${folder}/`)) {
+              setNote(null)
+              setSelected(null)
+              setDirty(false)
+            }
+            await refresh(vault)
+            toast('info', t('desktop.vault.folderTrashed', { name: folder }))
+          } catch (e) {
+            setError(String(e))
+          }
+        })
+      },
+    })
+  }
+
 
   const moveNote = (folder: string) => (selected ? moveNoteFrom(selected, folder) : undefined)
 
@@ -761,7 +811,7 @@ export default function App() {
   const incoming = useMemo(
     () =>
       notes
-        .filter((n) => n.platform && n.platform !== 'manual')
+        .filter(isIncomingMeeting)
         .sort((a, b) => (b.startedAt ?? b.updatedAt).localeCompare(a.startedAt ?? a.updatedAt)),
     [notes],
   )
@@ -882,6 +932,8 @@ export default function App() {
                     onOpen={(rel) => guard(() => open(rel))}
                     onMove={(rel, folder) => void moveNoteFrom(rel, folder)}
                     onAddFolder={(folder) => setNamingFolder(folder)}
+                    onRenameFolder={(folder, name) => guard(() => renameFolder(folder, name))}
+                    onTrashFolder={requestTrashFolder}
                   />
                 </>
               ) : (
@@ -1018,7 +1070,7 @@ export default function App() {
                   setDirty(true)
                 }}
               />
-              {note.platform && note.platform !== 'manual' && (
+              {isIncomingMeeting(note) && (
                 <MeetingMeta note={note} vault={vault} />
               )}
               <TicketFields note={note} onChange={(patch) => { setNote({ ...note, ...patch }); setDirty(true) }} />

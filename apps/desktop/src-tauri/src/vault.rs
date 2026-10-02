@@ -287,6 +287,154 @@ fn move_within(root: &Path, from: &str, to: &str) -> Result<(), String> {
     }
     fs::rename(&src, &dest).map_err(|e| e.to_string())
 }
+/// Resolve an existing folder and ensure symlinks cannot take it outside the vault.
+fn existing_folder(root: &Path, rel: &str) -> Result<PathBuf, String> {
+    let path = Path::new(rel);
+    if rel.is_empty()
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|c| !matches!(c, Component::Normal(_)))
+        || path
+            .components()
+            .next()
+            .is_some_and(|c| c.as_os_str() == TRASH || c.as_os_str() == TRANSCRIPT)
+    {
+        return Err(format!("invalid vault folder path: {rel}"));
+    }
+    let root = fs::canonicalize(root).map_err(|e| e.to_string())?;
+    let folder = root.join(path);
+    let mut current = root.clone();
+    for component in path.components() {
+        current.push(component);
+        if fs::symlink_metadata(&current)
+            .map_err(|e| e.to_string())?
+            .file_type()
+            .is_symlink()
+        {
+            return Err(format!("folder path contains a symlink: {rel}"));
+        }
+    }
+    let canonical = fs::canonicalize(&folder).map_err(|e| e.to_string())?;
+    if !canonical.starts_with(&root) || !canonical.is_dir() {
+        return Err(format!(
+            "folder is outside the vault or not a directory: {rel}"
+        ));
+    }
+    Ok(folder)
+}
+
+/// Rename a folder without replacing an existing path or moving it into itself.
+#[tauri::command]
+pub fn rename_vault_folder(
+    state: State<'_, VaultState>,
+    from: String,
+    to: String,
+) -> Result<(), String> {
+    rename_folder(&root(&state), &from, &to)
+}
+
+fn rename_folder(root: &Path, from: &str, to: &str) -> Result<(), String> {
+    let src = existing_folder(root, from)?;
+    let dst_rel = Path::new(to);
+    if to.is_empty()
+        || dst_rel.is_absolute()
+        || dst_rel
+            .components()
+            .any(|c| !matches!(c, Component::Normal(_)))
+        || dst_rel
+            .components()
+            .next()
+            .is_some_and(|c| c.as_os_str() == TRASH || c.as_os_str() == TRANSCRIPT)
+    {
+        return Err(format!("invalid vault folder path: {to}"));
+    }
+    let root = fs::canonicalize(root).map_err(|e| e.to_string())?;
+    let destination = root.join(dst_rel);
+    if destination == src || destination.starts_with(&src) {
+        return Err("a folder cannot be renamed into itself".into());
+    }
+    let parent = destination.parent().ok_or("invalid destination folder")?;
+    let canonical_parent = fs::canonicalize(parent).map_err(|e| e.to_string())?;
+    if !canonical_parent.starts_with(&root) {
+        return Err(format!("destination is outside the vault: {to}"));
+    }
+    let destination = canonical_parent.join(
+        destination
+            .file_name()
+            .ok_or("invalid destination folder")?,
+    );
+    if destination == src || destination.starts_with(&src) {
+        return Err("a folder cannot be renamed into itself".into());
+    }
+    if fs::symlink_metadata(&destination).is_ok() {
+        let source = fs::canonicalize(&src).map_err(|e| e.to_string())?;
+        let same_directory =
+            fs::canonicalize(&destination).is_ok_and(|existing| existing == source);
+        if !same_directory {
+            return Err(format!("a folder already exists at {to}"));
+        }
+        let parent = src.parent().ok_or("invalid source folder")?;
+        let temporary = unique_timestamped_path(parent, ".companion-rename", "")?;
+        fs::rename(&src, &temporary).map_err(|e| e.to_string())?;
+        if let Err(error) = fs::rename(&temporary, &destination) {
+            return match fs::rename(&temporary, &src) {
+                Ok(()) => Err(error.to_string()),
+                Err(restore) => Err(format!(
+                    "{error}; failed to restore original folder name: {restore}"
+                )),
+            };
+        }
+        return Ok(());
+    }
+    fs::rename(src, destination).map_err(|e| e.to_string())
+}
+
+/// Move a whole folder tree into the vault's reversible trash area.
+#[tauri::command]
+pub fn trash_vault_folder(state: State<'_, VaultState>, rel: String) -> Result<(), String> {
+    trash_folder(&root(&state), &rel)
+}
+
+fn trash_folder(root: &Path, rel: &str) -> Result<(), String> {
+    let folder = existing_folder(root, rel)?;
+    let vault_root = fs::canonicalize(root).map_err(|e| e.to_string())?;
+    let trash_path = vault_root.join(TRASH);
+    if fs::symlink_metadata(&trash_path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        return Err("trash directory cannot be a symlink".into());
+    }
+    fs::create_dir_all(&trash_path).map_err(|e| e.to_string())?;
+    let trash = fs::canonicalize(trash_path).map_err(|e| e.to_string())?;
+    if !trash.starts_with(&vault_root) {
+        return Err("trash directory is outside the vault".into());
+    }
+    let name = folder.file_name().ok_or("invalid folder name")?;
+    let mut destination = trash.join(name);
+    if fs::symlink_metadata(&destination).is_ok() {
+        let name = name.to_string_lossy();
+        destination = unique_timestamped_path(&trash, &name, "")?;
+    }
+    fs::rename(folder, destination).map_err(|e| e.to_string())
+}
+
+fn unique_timestamped_path(
+    directory: &Path,
+    stem: &str,
+    extension: &str,
+) -> Result<PathBuf, String> {
+    let first_suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    for attempt in 0u128..100 {
+        let suffix = first_suffix.saturating_add(attempt);
+        let path = directory.join(format!("{stem}-{suffix}{extension}"));
+        if fs::symlink_metadata(&path).is_err() {
+            return Ok(path);
+        }
+    }
+    Err("could not allocate a unique timestamped path".into())
+}
 
 /// Create an empty folder in the vault.
 ///
@@ -344,13 +492,9 @@ pub fn trash_vault_file(state: State<'_, VaultState>, rel: String) -> Result<(),
     // Notes from different days share a basename; landing on one already in the
     // trash would destroy it, which is what the trash exists to prevent.
     let mut dest = trash_dir.join(name);
-    if dest.exists() {
-        let stem = name.trim_end_matches(".md");
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0);
-        dest = trash_dir.join(format!("{stem}-{stamp}.md"));
+    if fs::symlink_metadata(&dest).is_ok() {
+        let stem = name.strip_suffix(".md").unwrap_or(name);
+        dest = unique_timestamped_path(&trash_dir, stem, ".md")?;
     }
     fs::rename(&from, dest).map_err(|e| e.to_string())?;
     Ok(())
@@ -364,8 +508,82 @@ mod tests {
     fn tmp(name: &str) -> PathBuf {
         let dir = env::temp_dir().join(format!("companion-vault-test-{name}"));
         let _ = fs::remove_dir_all(&dir);
+
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+    #[test]
+    fn trash_folder_preserves_same_basename_directories_with_suffixes() {
+        let root = tmp("trash-folder-collision");
+        fs::create_dir_all(root.join("Projects/Notes")).unwrap();
+        fs::write(root.join("Projects/Notes/a.md"), "one").unwrap();
+        trash_folder(&root, "Projects").unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join(".trash/Projects/Notes/a.md")).unwrap(),
+            "one"
+        );
+
+        fs::create_dir_all(root.join("Projects/Notes")).unwrap();
+        fs::write(root.join("Projects/Notes/a.md"), "two").unwrap();
+        trash_folder(&root, "Projects").unwrap();
+        let trashed: Vec<_> = fs::read_dir(root.join(".trash"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.is_dir())
+            .collect();
+        assert_eq!(trashed.len(), 2);
+        assert_eq!(
+            fs::read_to_string(root.join(".trash/Projects/Notes/a.md")).unwrap(),
+            "one"
+        );
+        let suffixed = trashed
+            .iter()
+            .find(|path| path.file_name().unwrap() != "Projects")
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(suffixed.join("Notes/a.md")).unwrap(),
+            "two"
+        );
+        assert!(trash_folder(&root, "").is_err());
+        assert!(trash_folder(&root, "../outside").is_err());
+    }
+
+    #[test]
+    fn rename_folder_allows_case_only_change_when_filesystem_aliases_case() {
+        let root = tmp("rename-folder-case");
+        fs::create_dir_all(root.join("Projects")).unwrap();
+        fs::write(root.join("Projects/a.md"), "one").unwrap();
+        let case_alias = fs::create_dir(root.join("projects")).is_err();
+
+        if case_alias {
+            rename_folder(&root, "Projects", "projects").unwrap();
+            let names: Vec<_> = fs::read_dir(&root)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            assert!(names.iter().any(|name| name == "projects"));
+            assert!(!names.iter().any(|name| name == "Projects"));
+            assert_eq!(
+                fs::read_to_string(root.join("projects/a.md")).unwrap(),
+                "one"
+            );
+        } else {
+            assert!(rename_folder(&root, "Projects", "projects").is_err());
+            assert!(root.join("Projects/a.md").exists());
+        }
+    }
+    #[test]
+    fn trash_folder_preserves_tree_and_rejects_root_escape() {
+        let root = tmp("trash-folder");
+        fs::create_dir_all(root.join("Projects/Notes")).unwrap();
+        fs::write(root.join("Projects/Notes/a.md"), "one").unwrap();
+        trash_folder(&root, "Projects").unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join(".trash/Projects/Notes/a.md")).unwrap(),
+            "one"
+        );
+        assert!(trash_folder(&root, "").is_err());
+        assert!(trash_folder(&root, "../outside").is_err());
     }
 
     #[test]

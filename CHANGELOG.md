@@ -62,7 +62,25 @@ Thanks to everyone who contributed to this release:
 
 ### Features
 
+* **desktop:** rename and trash vault folders
+* **desktop:** ask AI questions about delivered meeting transcripts
+* **extension:** scope generated Notulen to selected timeline topics
+* **extension:** move document output generation into Summary
+* **extension:** export the selected document to Markdown, Obsidian, PDF, or Desktop
+* **extension:** export transcripts to desktop before generating a summary
 * **ui:** centralize extension-led controls and palette across both apps
+
+### Bug Fixes
+
+* **desktop:** handle native messaging in the app executable without rewriting existing registrations
+* **desktop:** retain same-name folders in trash and allow case-only renames
+* **desktop:** ignore transcript reads and AI answers from a meeting after switching notes
+* **extension:** restore summary regeneration and exports; deliver summaries after transcript-only transfers
+* **extension:** reset timeline scope when its meeting or analysis changes
+* **extension:** report document generation success only after output is loaded
+* **desktop:** keep generated documents out of Incoming meetings and reuse collision-safe trash names
+* **extension:** preserve timeline choices through live MoM refreshes and keep summary exports resilient
+* **extension:** version desktop summary delivery and avoid replaying legacy summaries on upgrade
 
 ## [1.15.0](https://github.com/suiflex/companion/compare/v1.14.0...v1.15.0) (2026-09-23)
 

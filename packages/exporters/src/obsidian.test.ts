@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Analysis, AnalysisRecord, Meeting } from '@meetcc/shared';
-import { companionIdFor, obsidianPath, obsidianVault, toObsidian } from './obsidian';
+import { companionIdFor, obsidianPath, obsidianVault, toObsidian, toObsidianDocument } from './obsidian';
 
 const meeting: Meeting = {
   id: 'zkz-fwkm-ibn',
@@ -138,6 +138,17 @@ describe('toObsidian', () => {
     expect(toObsidian(meeting, invalid)).toContain(
       '**Template PDF diperbaiki minggu ini** #topic',
     );
+  });
+});
+describe('toObsidianDocument', () => {
+  it('keeps a generated document in its own Obsidian note linked to the source meeting', () => {
+    const output = toObsidianDocument(meeting, 'notulen', '# Notulen\n\nKeputusan: rollback.');
+
+    expect(output.path).toContain('-notulen.md');
+    expect(output.content).toContain('type: generated-document');
+    expect(output.content).toContain('source_companion_id:');
+    expect(output.content).toContain('# Notulen\n\nKeputusan: rollback.');
+    expect(output.content).not.toContain(analysis.executiveSummary);
   });
 });
 

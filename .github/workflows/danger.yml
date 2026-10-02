@@ -6,10 +6,9 @@ name: danger
 # in rdb that aborted the app on a single click: a layout panic under `panic = "abort"`.
 # None of those checks ever start the event loop, so none of them could have seen it.
 #
-# In companion, standard CI only compiles the crate or tests headless stdio framing
-# (--native-host). This workflow boots the actual companion-desktop binary into its
-# window event loop, initializes Tauri plugins, config, and vault root, and fails on
-# any crash, abort, or panic.
+# In companion, standard CI compiles the same executable used by the GUI and
+# native messaging. This workflow boots it as a desktop app and checks that
+# the window event loop initializes and exits cleanly.
 
 on:
   push:

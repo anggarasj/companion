@@ -44,6 +44,8 @@ describe('NoteTree sidebar controls', () => {
         onOpen={vi.fn()}
         onMove={vi.fn()}
         onAddFolder={onAddFolder}
+        onRenameFolder={vi.fn()}
+        onTrashFolder={vi.fn()}
       />,
     )
 
@@ -90,7 +92,15 @@ describe('NoteTree sidebar controls', () => {
       ],
     }
     render(
-      <NoteTree root={root} selected={null} onOpen={vi.fn()} onMove={vi.fn()} onAddFolder={vi.fn()} />,
+      <NoteTree
+        root={root}
+        selected={null}
+        onOpen={vi.fn()}
+        onMove={vi.fn()}
+        onAddFolder={vi.fn()}
+        onRenameFolder={vi.fn()}
+        onTrashFolder={vi.fn()}
+      />,
     )
 
     const parent = screen.getByRole('button', { name: /Rapat\s*1/ })
@@ -103,5 +113,36 @@ describe('NoteTree sidebar controls', () => {
     await user.click(parent)
     expect(screen.getByRole('button', { name: /2026-09-26\s*1/ }).getAttribute('aria-expanded')).toBe('false')
     expect(screen.queryByText('Meeting outcome')).toBeNull()
+  })
+  it('lets a folder rename be cancelled or submitted and exposes trash action', async () => {
+    const user = userEvent.setup()
+    const onRenameFolder = vi.fn()
+    const onTrashFolder = vi.fn()
+    render(
+      <NoteTree
+        root={ROOT}
+        selected={null}
+        onOpen={vi.fn()}
+        onMove={vi.fn()}
+        onAddFolder={vi.fn()}
+        onRenameFolder={onRenameFolder}
+        onTrashFolder={onTrashFolder}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: t('desktop.vault.renameFolder', { folder: 'Projects' }) }))
+    const input = screen.getByRole('textbox', { name: t('desktop.vault.folderName') })
+    await user.clear(input)
+    await user.type(input, 'Drafts')
+    await user.keyboard('{Escape}')
+    expect(onRenameFolder).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: t('desktop.vault.renameFolder', { folder: 'Projects' }) }))
+    const nextInput = screen.getByRole('textbox', { name: t('desktop.vault.folderName') })
+    await user.clear(nextInput)
+    await user.type(nextInput, 'Drafts{Enter}')
+    expect(onRenameFolder).toHaveBeenCalledWith('Projects', 'Drafts')
+    await user.click(screen.getByRole('button', { name: t('desktop.vault.trashFolder', { folder: 'Projects' }) }))
+    expect(onTrashFolder).toHaveBeenCalledWith('Projects')
   })
 })

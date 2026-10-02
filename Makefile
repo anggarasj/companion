@@ -2,7 +2,7 @@
 	check-all check-all-js ci ci-js ci-rust test test-coverage test-vault typecheck typecheck-desktop lint \
 	rust-fmt rust-fmt-fix rust-lint rust-check \
 	build build-extension build-desktop build-host build-mcp build-sync \
-	smoke smoke-desktop smoke-mcp smoke-sync \
+	smoke smoke-desktop smoke-host smoke-mcp smoke-sync \
 	pack pack-source sign-firefox lint-firefox sync-start \
 	dev dev-extension dev-desktop tauri tauri-dev tauri-bundle native-host-install
 
@@ -17,6 +17,8 @@
 # same target, so a green local run means a green pipeline.
 
 DESKTOP_CRATE := apps/desktop/src-tauri
+RUST_HOST_TARGET = $(shell rustc -vV | sed -n 's/^host: //p')
+DESKTOP_BINARY = companion-desktop$(if $(findstring windows,$(RUST_HOST_TARGET)),.exe,)
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS=":.*## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -99,6 +101,7 @@ build-desktop: ## Build the desktop frontend (tsc + vite)
 build-host: ## Bundle the native-messaging host
 	npm run build:host -w @meetcc/desktop
 
+
 build-mcp: ## Build the MCP server bin
 	npm run build -w @meetcc/mcp
 
@@ -170,9 +173,9 @@ smoke-desktop: build-desktop ## The desktop binary starts Tauri, opens a window,
 	@cargo build --quiet --manifest-path apps/desktop/src-tauri/Cargo.toml
 	@./scripts/danger_desktop.sh
 
-smoke-host: ## The desktop binary answers native messaging in --native-host mode
-	@cd apps/desktop/src-tauri && cargo build --quiet
-	@node scripts/smoke-host-rs.mjs apps/desktop/src-tauri/target/debug/companion-desktop
+smoke-host: ## The desktop executable answers native messaging over framed stdio
+	@cd $(DESKTOP_CRATE) && cargo build --quiet
+	@node scripts/smoke-host-rs.mjs apps/desktop/src-tauri/target/debug/$(DESKTOP_BINARY)
 
 smoke-mcp: build-mcp ## The built MCP bin answers over stdio
 	npm run smoke -w @meetcc/mcp

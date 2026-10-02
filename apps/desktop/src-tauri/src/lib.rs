@@ -110,6 +110,8 @@ pub fn run() {
             vault::open_external,
             vault::move_vault_file,
             vault::create_vault_folder,
+            vault::rename_vault_folder,
+            vault::trash_vault_folder,
             vault::list_vault_folders,
             vault::list_vault,
             vault::read_vault_file,

@@ -9,6 +9,7 @@
 
 import type { AnalysisRecord, Diagram, Entry, MeetingMeta } from '@meetcc/shared';
 import mockSeedsData from './mockSeeds.json';
+import { t } from '@meetcc/shared/i18n';
 
 const STORAGE_KEY = 'meetcc_dev_storage';
 
@@ -359,6 +360,12 @@ async function handleMockRuntimeMessage(msg: unknown): Promise<unknown> {
   const m = msg as { type?: string; op?: string; args?: Record<string, unknown>; question?: string } | undefined;
   if (m?.type === 'db') {
     return handleMockDbOperation(m.op, m.args);
+  }
+  if (m?.type === 'generate-doc') {
+    return { ok: false, error: t('ext.docs.previewUnavailable') };
+  }
+  if (m?.type === 'bridge-deliver-transcript' || m?.type === 'bridge-export-document') {
+    return { ok: false, error: t('ext.docs.desktopPreviewUnavailable') };
   }
   if (m?.type === 'global-ask') {
     return {

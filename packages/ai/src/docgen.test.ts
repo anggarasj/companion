@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Analysis, Entry, Meeting } from '@meetcc/shared'
+import type { Analysis, DocType, Entry, Meeting, TimelineItem } from '@meetcc/shared'
 import {
   buildDocUserPrompt,
   DOC_META,
@@ -27,18 +27,20 @@ const analysis = {
 // call-recording mock: returns outputs[i] for the i-th complete() call
 function seq(outputs: Array<string | Error>) {
   const systems: string[] = []
+  const users: string[] = []
   let i = 0
   const client: AIClient = {
     provider: 'custom',
     complete: async (req) => {
       systems.push(req.system)
+      users.push(req.user)
       const out = outputs[Math.min(i, outputs.length - 1)]
       i++
       if (out instanceof Error) throw out
       return out
     },
   }
-  return { client, systems, calls: () => i }
+  return { client, systems, users, calls: () => i }
 }
 
 describe('DOC_META', () => {
@@ -116,6 +118,36 @@ describe('generateDoc (draft -> critique -> revise)', () => {
     const { client } = seq(['   '])
     await expect(generateDoc(client, meeting, null, 'notulen')).rejects.toThrow(AIError)
   })
+  it('keeps a Notulen inside the selected timeline topics through every AI pass', async () => {
+    const { client, users } = seq(['# DRAFT', 'remove discussion outside scope', '# FINAL'])
+    await generateDoc(
+      client,
+      meeting,
+      null,
+      'notulen',
+      undefined,
+      undefined,
+      [{ time: '01:00', topic: 'Anggaran' }],
+    )
+
+    expect(users).toHaveLength(3)
+    for (const prompt of users) {
+      expect(prompt).toContain('"topic": "Anggaran"')
+      expect(prompt).toContain('Cover only the selected topics')
+      expect(prompt).not.toContain('Vendor')
+    }
+  })
+  it('applies timeline scope to every document template', async () => {
+    const selected: TimelineItem[] = [{ time: '01:00', topic: 'Selected scope' }]
+    const types = Object.keys(DOC_META) as DocType[]
+    for (const type of types) {
+      const { client, users } = seq(['# DRAFT', 'TIDAK ADA MASALAH BERARTI'])
+      await generateDoc(client, meeting, null, type, undefined, undefined, selected)
+      expect(users[0]).toContain('"topic": "Selected scope"')
+      expect(users[0]).toContain('Cover only the selected topics')
+    }
+  })
+
 
   it('reports progress ending at 100% (step === total)', async () => {
     const { client } = seq(['# DRAFT', 'ada masalah', '# FINAL'])

@@ -39,6 +39,8 @@ export interface BridgeBatch {
    * rather than appended a second time.
    */
   snapshot?: boolean
+  /** Standalone derived documents do not have a raw transcript sidecar. */
+  includeTranscript?: boolean
   /** Meeting tags from the extension, merged into the note's frontmatter tags. */
   tags?: string[]
 }
@@ -112,11 +114,12 @@ export async function applyBatch(
     // language would split one vault across two vocabularies.
     tags: ['rapat'],
     // must match where appendTranscript writes it, below
-    transcript: `.transcript/${id}.jsonl`,
+    ...(batch.includeTranscript === false ? {} : { transcript: `.transcript/${id}.jsonl` }),
     updatedAt: deps.now(),
     title: '',
     body: '',
   }
+  note.platform = batch.platform
   if (batch.markdown !== undefined && (!existing || batch.replaceBody)) {
     // First delivery carries the (possibly AI-cleaned) note body. The writer
     // synthesizes the `# heading`, so split it out of the markdown body.
