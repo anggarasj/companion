@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.17.0](https://github.com/suiflex/companion/compare/v1.16.1...v1.17.0) (2026-10-02)
+
+
+### Features
+
+* **desktop:** manage folders and meeting context ([a2156d7](https://github.com/suiflex/companion/commit/a2156d73e2942e896cb346b0156e7c0594def454))
+* **extension:** add timeline-scoped document generation ([64109e2](https://github.com/suiflex/companion/commit/64109e28da5bea60cfdca33784f2a19468741483))
+* improve meeting documents and desktop workflows ([85bc489](https://github.com/suiflex/companion/commit/85bc489ae70a28cbbea3e699f607f81cb5b6c3c7))
+
+
+### Bug Fixes
+
+* **bridge:** prevent duplicate and stale summary delivery ([5215081](https://github.com/suiflex/companion/commit/52150815604697f9037e53e64bbc6c62a6729c96))
+* **bridge:** restore extension-to-desktop export ([539c470](https://github.com/suiflex/companion/commit/539c470b205473a9ce65c1d25e40c3e60ca864f4))
+* **desktop:** exclude generated notes from inbox ([c1163a1](https://github.com/suiflex/companion/commit/c1163a18e33df56c6ee2d68b2da2341e838c3908))
+* **desktop:** protect note and folder operations ([648275c](https://github.com/suiflex/companion/commit/648275ccc3db02de72c4d1b99c079553c2a70fa4))
+* **extension:** preserve summary actions and live scope ([9280da5](https://github.com/suiflex/companion/commit/9280da515cabe2def9615c441816b9a7284ed34e))
+* **extension:** restore summary and desktop export flow ([ebfd068](https://github.com/suiflex/companion/commit/ebfd0682f6eba67e04c3393777822a9c8cb53c4b))
+* **vault:** reuse timestamped collision paths ([41da552](https://github.com/suiflex/companion/commit/41da552a1bd057cf9ce8daa0853cae537fc38da2))
+
 ## [1.16.1](https://github.com/suiflex/companion/compare/v1.16.0...v1.16.1) (2026-09-26)
 
 
