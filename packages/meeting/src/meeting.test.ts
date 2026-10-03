@@ -170,11 +170,23 @@ describe('runPipeline', () => {
     expect(records.at(-1)?.status).toBe('error');
   });
 
-  it('skips when already processing unless forced', async () => {
-    const processing: AnalysisRecord = { status: 'processing', step: 'ai', startedAt: iso(0), provider: 'openai' };
-    const { deps } = makeDeps({ getRecord: async () => processing });
-    expect((await runPipeline('x', deps)).ok).toBe(false);
-    expect((await runPipeline('x', deps, { force: true })).ok).toBe(true);
+  it('skips fresh processing but recovers stale processing without force', async () => {
+    const fresh: AnalysisRecord = { status: 'processing', step: 'ai', startedAt: iso(30_000), provider: 'openai' };
+    const { deps: freshDeps } = makeDeps({ getRecord: async () => fresh });
+    expect(await runPipeline('fresh-processing', freshDeps)).toMatchObject({
+      ok: false,
+      reason: 'already-processing',
+    });
+
+    const stale: AnalysisRecord = {
+      status: 'processing',
+      step: 'ai',
+      startedAt: iso(STALE_PROCESSING_MS + 1000),
+      provider: 'openai',
+    };
+    const { deps: staleDeps, records } = makeDeps({ getRecord: async () => stale });
+    expect(await runPipeline('stale-processing', staleDeps)).toMatchObject({ ok: true });
+    expect(records.map((r) => r.status)).toEqual(['processing', 'processing', 'done']);
   });
 
   it('concurrent non-force runs share ONE AI run (check-then-set would double-bill)', async () => {

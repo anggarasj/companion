@@ -2,6 +2,7 @@ import type { AIClient } from '@meetcc/ai';
 import { analyzeMeeting } from '@meetcc/ai';
 import { t } from '@meetcc/shared/i18n';
 import type { AnalysisRecord, Meeting } from '@meetcc/shared';
+import { STALE_PROCESSING_MS } from './detect';
 import { createInFlight } from './inflight';
 
 /**
@@ -55,7 +56,11 @@ async function runPipelineInner(
   if (!meeting.entries.length) return { ok: false, reason: 'empty' };
 
   const existing = await deps.getRecord(id);
-  if (existing?.status === 'processing' && !opts.force) {
+  if (
+    existing?.status === 'processing' &&
+    !opts.force &&
+    !(Date.parse(deps.now()) - Date.parse(existing.startedAt) > STALE_PROCESSING_MS)
+  ) {
     return { ok: false, reason: 'already-processing' };
   }
 
