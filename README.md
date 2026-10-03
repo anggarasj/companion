@@ -53,7 +53,28 @@ where Firefox handles updates itself.
 > **Manual Chrome / Chromium installation**:
 > 1. Download [`meetcc-extension.zip`](https://github.com/suiflex/companion/releases/latest/download/meetcc-extension.zip) (or from the [latest release](https://github.com/suiflex/companion/releases/latest)) and unzip it.
 > 2. Open `chrome://extensions` (or `edge://extensions`, `brave://extensions`), toggle **Developer mode** on, click **Load unpacked**, and select the extracted directory.
+>
+> This ZIP is the latest GitHub release and may be newer than the version currently listed in the Chrome Web Store. The Web Store version updates through Chrome; for a ZIP-installed copy, use the manual update steps below.
 
+### Updating without losing meeting data
+
+Do not uninstall or remove the extension before updating. `chrome.storage.local`
+belongs to the extension ID in that browser profile, and uninstalling can clear
+its data. Keep the same browser profile and pinned extension ID.
+
+- **Chrome Web Store install:** leave the extension installed and let Chrome
+  apply its update. Do not replace it with a ZIP copy.
+- **Direct ZIP / sideload install:** download and extract the new ZIP, replace
+  the files in the same directory that was loaded as an unpacked extension,
+  then open `chrome://extensions` (or the browser's extensions page) and click
+  **Reload** on the existing extension. Do not load it from a different
+  directory or remove the existing entry first.
+
+Reinstalling under a different extension ID or in a different browser profile
+opens an empty dashboard; it does not move the old data. Before deliberately
+switching IDs or profiles, export a backup from **Settings → Cadangan** and
+restore it in the destination. Companion Desktop is a useful second copy of
+meeting notes and transcripts, not a complete backup of Settings or API keys.
 > **The desktop builds are not code-signed yet.** macOS refuses a downloaded
 > app on first launch — on macOS 15 and newer the dialog offers only *Move to
 > Trash* and *Done*, and neither right-click → **Open** nor *Open Anyway*

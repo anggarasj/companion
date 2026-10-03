@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+* **extension:** add a collapsible transcript sidebar with shared generation scope
+* **extension:** transfer selected meetings to Desktop in one action
+* **extension:** combine meeting summary and document exports in one menu
+* **extension:** exclude individual transcript messages from generated documents
+* **extension:** sync topic-range selection with transcript messages
+* **extension:** add bulk deletion for selected meetings
+* **extension:** surface Desktop bridge setup guidance
+* **extension:** recover stale meeting analysis runs
+
+### Bug Fixes
+
+* **extension:** keep the mini-context picker visible beyond its card
+
 ## [1.17.0](https://github.com/suiflex/companion/compare/v1.16.1...v1.17.0) (2026-10-02)
 
 

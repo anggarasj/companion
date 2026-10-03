@@ -11,9 +11,9 @@ import {
   type Entry,
   type Meeting,
 } from '@meetcc/shared'
-import { Button, SegmentedControl, TextInput, useToast } from '@meetcc/ui'
+import { Button, SegmentedControl, useToast } from '@meetcc/ui'
 import { liveActions, speakerStats } from '@meetcc/meeting'
-import { db, listHighlights } from '../lib/db'
+import { listHighlights } from '../lib/db'
 
 // Teams avatar URLs need the Teams session cookies; from the extension page
 // they 401 into a broken image, so fall back to the initial on load error.
@@ -42,6 +42,8 @@ interface Props {
   meeting: Meeting
   live: boolean
   onClear: () => void
+  selectedEntries: Set<number>
+  onToggleEntry: (index: number, checked: boolean) => void
 }
 
 /** Keys, not text: resolved at render time so the labels follow the language. */
@@ -52,7 +54,13 @@ const HIGHLIGHT_LABEL: Record<string, Parameters<typeof t>[0]> = {
   risk: 'ext.kind.risk',
 }
 
-export function Transcript({ meeting, live, onClear }: Props) {
+export function Transcript({
+  meeting,
+  live,
+  onClear,
+  selectedEntries,
+  onToggleEntry,
+}: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const stick = useRef(true)
   const toast = useToast()
@@ -66,10 +74,6 @@ export function Transcript({ meeting, live, onClear }: Props) {
   const [highlights, setHighlights] = useState<
     { id: number; seq: number; kind: string; text: string }[]
   >([])
-  // imported recordings arrive as "Speaker 1" when the endpoint cannot diarize;
-  // renaming is offered only once a meeting is over, because live captions keep
-  // arriving under the original name and would undo it
-  const [renaming, setRenaming] = useState<{ from: string; draft: string } | null>(null)
 
   const reload = useCallback(() => {
     void loadClean(meeting.id).then((r) => {
@@ -127,24 +131,6 @@ export function Transcript({ meeting, live, onClear }: Props) {
     await saveClean(meeting.id, next)
   }
 
-  // renames every line of one speaker at once, in the index and in the
-  // chrome.storage copy a re-index would otherwise restore
-  const commitRename = async () => {
-    if (!renaming) return
-    const { from, draft } = renaming
-    setRenaming(null)
-    if (!draft.trim() || draft.trim() === from) return
-    try {
-      const res = await db<{ moved: number }>('rename-speaker', {
-        sessionId: meeting.id,
-        from,
-        to: draft.trim(),
-      })
-      toast('success', t('ext.transcript.renamed', { count: res.moved, name: draft.trim() }))
-    } catch (e) {
-      toast('error', (e as Error).message)
-    }
-  }
 
   const cleaned = record?.status === 'done' ? record.entries : null
   const processing = record?.status === 'processing'
@@ -251,6 +237,14 @@ export function Transcript({ meeting, live, onClear }: Props) {
         </Button>
       </div>
 
+      {meeting.entries.length > 0 && (
+        <div className="transcript-message-count">
+          {t('ext.transcript.selectedEntryCount', {
+            count: selectedEntries.size,
+            total: meeting.entries.length,
+          })}
+        </div>
+      )}
       {highlights.length > 0 && view === 'raw' && (
         <div className='hl-strip'>
           <span className='section-label'>{t('ext.transcript.highlights')}</span>
@@ -341,33 +335,24 @@ export function Transcript({ meeting, live, onClear }: Props) {
             const flag = view === 'raw' ? bySeq.get(i) : undefined
             return (
               <article
-                className={`entry ${flag ? 'entry-flagged' : ''}`}
+                className={`entry ${flag ? 'entry-flagged' : ''} ${selectedEntries.has(i) ? '' : 'entry-excluded'}`}
                 key={`${e.time}-${i}`}>
                 <Avatar src={e.avatar} name={e.speaker} />
                 <div className='entry-body'>
                   <div className='entry-head'>
-                    {renaming?.from === e.speaker ? (
-                      <TextInput
-                        className='speaker-rename'
-                        autoFocus
-                        aria-label={`Ganti nama ${e.speaker}`}
-                        value={renaming.draft}
-                        onChange={(ev) => setRenaming({ from: e.speaker, draft: ev.target.value })}
-                        onBlur={() => setRenaming(null)}
-                        onKeyDown={(ev) => {
-                          if (ev.key === 'Escape') setRenaming(null)
-                          if (ev.key === 'Enter') void commitRename()
-                        }}
-                      />
-                    ) : live ? (
-                      <span className='speaker'>{e.speaker}</span>
-                    ) : (
-                      <Button className='speaker speaker-editable'
-                      title={t('ext.transcript.renameSpeaker')}
-                      onClick={() => setRenaming({ from: e.speaker, draft: e.speaker })}>{e.speaker}</Button>
-                    )}
+                    <span className='speaker'>{e.speaker}</span>
                     <time className='stamp'>{fmtTime(e.time)}</time>
                     {flag && <span className={`hl-tag hl-${flag}`}>{HIGHLIGHT_LABEL[flag] ? t(HIGHLIGHT_LABEL[flag]) : flag}</span>}
+                    <input
+                      type="checkbox"
+                      className="entry-include-toggle"
+                      aria-label={t('ext.transcript.includeEntryInDoc', {
+                        speaker: e.speaker,
+                        time: fmtTime(e.time),
+                      })}
+                      checked={selectedEntries.has(i)}
+                      onChange={(event) => onToggleEntry(i, event.target.checked)}
+                    />
                   </div>
                   <p className='text'>
                     {e.text}

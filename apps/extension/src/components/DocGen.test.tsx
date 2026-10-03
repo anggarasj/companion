@@ -1,12 +1,41 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DOC_META } from '@meetcc/ai'
 import { loadDocProgress, loadDocs, type Analysis, type Meeting } from '@meetcc/shared'
 import { t } from '@meetcc/shared/i18n'
 import { ToastProvider } from '@meetcc/ui'
-import { DocumentOutputs } from './DocGen'
+import { DocumentOutputs as BaseDocumentOutputs } from './DocGen'
+import { useTimelineScope } from '../lib/timelineScope'
+
+function DocumentOutputs({
+  meeting,
+  analysis,
+  live = false,
+  selectedEntryIndices,
+}: {
+  meeting: Meeting
+  analysis: Analysis | null
+  live?: boolean
+  selectedEntryIndices?: Set<number>
+}) {
+  const timeline = analysis?.timeline ?? []
+  const { selectedTimeline, toggleTimeline } = useTimelineScope(meeting.id, timeline)
+  const included = selectedEntryIndices ?? new Set(meeting.entries.map((_, index) => index))
+  const excludedEntries = new Set(meeting.entries.flatMap((_, index) => included.has(index) ? [] : [index]))
+  return (
+    <BaseDocumentOutputs
+      meeting={meeting}
+      analysis={analysis}
+      live={live}
+      selectedTimeline={selectedTimeline}
+      indeterminateTimeline={new Set()}
+      onToggleTimeline={toggleTimeline}
+      excludedEntries={excludedEntries}
+    />
+  )
+}
 
 vi.mock('@meetcc/shared', () => ({
   DOCPROG_PREFIX: 'doc-progress:',
@@ -81,7 +110,7 @@ describe('Notulen timeline scope', () => {
     await user.click(vendor)
     await user.click(
       screen.getByRole('button', {
-        name: t('ext.docs.generateDocument'),
+        name: t('ext.docs.generateDocument', { label: DOC_META.notulen.label }),
       }),
     )
 
@@ -95,11 +124,14 @@ describe('Notulen timeline scope', () => {
     expect(screen.getByText(t('ext.docs.timelineScopeHint'))).toBeTruthy()
     expect(await screen.findByText('# Notulen generated output')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: t('ext.docs.exportResult') }))
-    expect(screen.getByRole('menuitem', { name: t('ext.docs.markdownExport') })).toBeTruthy()
-    expect(screen.getByRole('menuitem', { name: t('ext.docs.obsidianExport') })).toBeTruthy()
-    expect(screen.getByRole('menuitem', { name: t('ext.docs.pdfExport') })).toBeTruthy()
+    const documentExportGroup = screen.getByRole('group', {
+      name: t('ext.docs.exportDocumentGroup'),
+    })
+    expect(within(documentExportGroup).getByRole('menuitem', { name: t('ext.docs.markdownExport') })).toBeTruthy()
+    expect(within(documentExportGroup).getByRole('menuitem', { name: t('ext.docs.obsidianExport') })).toBeTruthy()
+    expect(within(documentExportGroup).getByRole('menuitem', { name: t('ext.docs.pdfExport') })).toBeTruthy()
     await user.click(
-      screen.getByRole('menuitem', {
+      within(documentExportGroup).getByRole('menuitem', {
         name: t('ext.docs.desktopExportDocument', { label: DOC_META.notulen.label }),
       }),
     )
@@ -109,6 +141,41 @@ describe('Notulen timeline scope', () => {
       docType: 'notulen',
       generatedAt: '2026-09-29T00:00:00.000Z',
     })
+  })
+  it('sends only checked transcript messages into document generation', async () => {
+    const sendMessage = vi.fn(async () => ({ ok: true, content: '# Draft' }))
+    vi.stubGlobal('chrome', { runtime: { sendMessage } })
+    const user = userEvent.setup()
+    const multiMeeting: Meeting = {
+      ...meeting,
+      entries: [
+        ...meeting.entries,
+        { speaker: 'Budi', text: 'Exclude this line.', time: '2026-09-29T10:03:00Z' },
+        { speaker: 'Ayu', text: 'Keep this line.', time: '2026-09-29T10:04:00Z' },
+      ],
+    }
+    render(
+      <ToastProvider>
+        <DocumentOutputs
+          meeting={multiMeeting}
+          analysis={analysis}
+          selectedEntryIndices={new Set([0, 2])}
+        />
+      </ToastProvider>,
+    )
+
+    await user.click(screen.getByRole('button', {
+      name: t('ext.docs.generateDocument', { label: DOC_META.notulen.label }),
+    }))
+
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledWith({
+      type: 'generate-doc',
+      meetingId: multiMeeting.id,
+      docType: 'notulen',
+      templateId: undefined,
+      timelineIndices: [0, 1],
+      excludedEntryIndices: [1],
+    }))
   })
   it('preserves deselections across timeline updates and selects added topics', async () => {
     const user = userEvent.setup()
@@ -171,7 +238,9 @@ describe('Notulen timeline scope', () => {
     expect((screen.getByRole('checkbox', { name: /00:08 Risiko/ }) as HTMLInputElement).checked).toBe(true)
     expect((screen.getByRole('checkbox', { name: /00:10 Rencana/ }) as HTMLInputElement).checked).toBe(true)
     await user.click(screen.getByRole('checkbox', { name: /00:10 Rencana/ }))
-    await user.click(screen.getByRole('button', { name: t('ext.docs.generateDocument') }))
+    await user.click(screen.getByRole('button', {
+      name: t('ext.docs.generateDocument', { label: DOC_META.notulen.label }),
+    }))
 
     expect(sendMessage).toHaveBeenCalledWith({
       type: 'generate-doc',
@@ -198,7 +267,9 @@ describe('Notulen timeline scope', () => {
     )
     expect((screen.getByRole('checkbox', { name: /00:02 Anggaran/ }) as HTMLInputElement).checked).toBe(true)
     expect((screen.getByRole('checkbox', { name: /00:05 Vendor/ }) as HTMLInputElement).checked).toBe(true)
-    await user.click(screen.getByRole('button', { name: t('ext.docs.generateDocument') }))
+    await user.click(screen.getByRole('button', {
+      name: t('ext.docs.generateDocument', { label: DOC_META.notulen.label }),
+    }))
     expect(sendMessage).toHaveBeenCalledWith({
       type: 'generate-doc',
       meetingId: meeting.id,
@@ -223,7 +294,9 @@ describe('Notulen timeline scope', () => {
     const topic = screen.getByRole('checkbox', { name: /00:01 Only topic/ })
     await user.click(topic)
     expect((topic as HTMLInputElement).checked).toBe(true)
-    await user.click(screen.getByRole('button', { name: t('ext.docs.generateDocument') }))
+    await user.click(screen.getByRole('button', {
+      name: t('ext.docs.generateDocument', { label: DOC_META.notulen.label }),
+    }))
     expect(sendMessage).toHaveBeenCalledWith({
       type: 'generate-doc',
       meetingId: meeting.id,
@@ -246,7 +319,9 @@ describe('Notulen timeline scope', () => {
 
     await user.click(screen.getByRole('radio', { name: DOC_META.brd.label }))
     expect(screen.getByRole('checkbox', { name: /00:05 Vendor/ })).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: t('ext.docs.generateDocument') }))
+    await user.click(screen.getByRole('button', {
+      name: t('ext.docs.generateDocument', { label: DOC_META.brd.label }),
+    }))
 
     expect(sendMessage).toHaveBeenCalledWith({
       type: 'generate-doc',
@@ -268,7 +343,7 @@ describe('Notulen timeline scope', () => {
 
     await user.click(
       screen.getByRole('button', {
-        name: t('ext.docs.generateDocument'),
+        name: t('ext.docs.generateDocument', { label: DOC_META.notulen.label }),
       }),
     )
 
@@ -289,8 +364,11 @@ describe('Notulen timeline scope', () => {
 
     await user.click(screen.getByRole('button', { name: t('ext.docs.exportResult') }))
     expect(screen.getByText(t('ext.docs.exportTranscriptHint'))).toBeTruthy()
+    const documentExportGroup = screen.getByRole('group', {
+      name: t('ext.docs.exportDocumentGroup'),
+    })
     await user.click(
-      screen.getByRole('menuitem', { name: t('ext.docs.desktopExportTranscript') }),
+      within(documentExportGroup).getByRole('menuitem', { name: t('ext.docs.desktopExportTranscript') }),
     )
 
     expect(sendMessage).toHaveBeenCalledWith({

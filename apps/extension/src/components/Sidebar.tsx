@@ -92,6 +92,8 @@ interface Props {
   onKnowledge: () => void
   onSearch: () => void
   onDelete: (id: string) => void
+  onExportMeetings: (ids: string[]) => Promise<string[]>
+  onDeleteMeetings: (ids: string[]) => Promise<string[] | null>
 }
 
 export function Sidebar({
@@ -108,8 +110,14 @@ export function Sidebar({
   onKnowledge,
   onSearch,
   onDelete,
+  onExportMeetings,
+  onDeleteMeetings,
 }: Props) {
   const [open, setOpen] = useState(true)
+  const [selecting, setSelecting] = useState(false)
+  const [selectedMeetings, setSelectedMeetings] = useState<Set<string>>(() => new Set())
+  const [exporting, setExporting] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   // P2.3 — project grouping. The mapping lives in the index, so a failed load
   // just means the filter is unavailable, never an empty meeting list.
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([])
@@ -133,12 +141,66 @@ export function Sidebar({
       alive = false
     }
   }, [meetings.length])
+  useEffect(() => {
+    const currentIds = new Set(meetings.map((m) => m.id))
+    setSelectedMeetings((current) => {
+      const next = new Set([...current].filter((id) => currentIds.has(id)))
+      return next.size === current.size ? current : next
+    })
+  }, [meetings])
 
   const shown = useMemo(
     () => (filter ? meetings.filter((m) => projectOf[m.id] === filter) : meetings),
     [meetings, filter, projectOf],
   )
   const live = shown.filter((m) => isLive(m, now))
+  const allVisibleSelected = shown.length > 0 && shown.every((m) => selectedMeetings.has(m.id))
+  const toggleMeeting = (id: string, checked: boolean) => {
+    setSelectedMeetings((current) => {
+      const next = new Set(current)
+      if (checked) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }
+  const toggleVisibleMeetings = () => {
+    setSelectedMeetings((current) => {
+      const next = new Set(current)
+      const clearVisible = shown.length > 0 && shown.every((m) => current.has(m.id))
+      for (const m of shown) {
+        if (clearVisible) next.delete(m.id)
+        else next.add(m.id)
+      }
+      return next
+    })
+  }
+  const cancelSelection = () => {
+    setSelecting(false)
+    setSelectedMeetings(new Set())
+  }
+  const transferSelected = async () => {
+    if (!selectedMeetings.size || exporting || deleting) return
+    setExporting(true)
+    try {
+      const failedIds = await onExportMeetings([...selectedMeetings])
+      setSelectedMeetings(new Set(failedIds))
+      if (!failedIds.length) setSelecting(false)
+    } finally {
+      setExporting(false)
+    }
+  }
+  const deleteSelected = async () => {
+    if (!selectedMeetings.size || exporting || deleting) return
+    setDeleting(true)
+    try {
+      const failedIds = await onDeleteMeetings([...selectedMeetings])
+      if (failedIds === null) return
+      setSelectedMeetings(new Set(failedIds))
+      if (!failedIds.length) setSelecting(false)
+    } finally {
+      setDeleting(false)
+    }
+  }
   const past = shown.filter((m) => !isLive(m, now))
 
   const badge = (m: Meeting) => {
@@ -155,6 +217,16 @@ export function Sidebar({
     const label = titles[m.id] || displayMeetingId(m.id)
     return (
     <div key={m.id} className='meeting-row'>
+      {selecting && (
+        <input
+          className='meeting-select'
+          type='checkbox'
+          aria-label={t('ext.sidebar.selectMeeting', { label })}
+          checked={selectedMeetings.has(m.id)}
+          disabled={exporting || deleting}
+          onChange={(event) => toggleMeeting(m.id, event.target.checked)}
+        />
+      )}
       <Button className={`meeting ${m.id === selectedId ? 'selected' : ''}`}
       title={m.id}
       onClick={() => onSelect(m.id)}><span className={`status ${isLive(m, now) ? 'on' : ''}`} />
@@ -272,6 +344,56 @@ export function Sidebar({
           </label>
         )}
 
+        <div className='meeting-bulk'>
+          <div className='meeting-bulk-row'>
+            <Button
+              type='button'
+              variant={selecting ? 'ghost' : 'default'}
+              disabled={loading || meetings.length === 0 || exporting || deleting}
+              aria-pressed={selecting}
+              onClick={() => selecting ? cancelSelection() : setSelecting(true)}
+            >
+              {selecting ? t('ext.sidebar.cancelMeetingSelection') : t('ext.sidebar.selectMeetings')}
+            </Button>
+            {selecting && (
+              <Button
+                type='button'
+                variant='ghost'
+                disabled={shown.length === 0 || exporting || deleting}
+                onClick={toggleVisibleMeetings}
+              >
+                {allVisibleSelected ? t('ext.sidebar.clearVisibleSelection') : t('ext.sidebar.selectVisibleMeetings')}
+              </Button>
+            )}
+          </div>
+          {selecting && (
+            <div className='meeting-bulk-row'>
+              <span className='meeting-selection-count'>
+                {t('ext.sidebar.selectedMeetingCount', { count: selectedMeetings.size })}
+              </span>
+              <Button
+                type='button'
+                variant='primary'
+                disabled={!selectedMeetings.size || exporting || deleting}
+                onClick={() => void transferSelected()}
+              >
+                {exporting
+                  ? t('ext.sidebar.sendingMeetingsToDesktop')
+                  : t('ext.sidebar.sendMeetingsToDesktop', { count: selectedMeetings.size })}
+              </Button>
+              <Button
+                type='button'
+                variant='danger'
+                disabled={!selectedMeetings.size || exporting || deleting}
+                onClick={() => void deleteSelected()}
+              >
+                {deleting
+                  ? t('ext.sidebar.deletingMeetings')
+                  : t('ext.sidebar.deleteSelectedMeetings', { count: selectedMeetings.size })}
+              </Button>
+            </div>
+          )}
+        </div>
         {loading ? (
           <div aria-hidden='true'>
             {[0, 1, 2].map((i) => (

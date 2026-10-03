@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { classifyBridgeError } from '../lib/bridgeError';
+import { useEffect, useMemo, useState } from 'react';
 import { locale, t } from '@meetcc/shared/i18n';
 import type { Analysis, AnalysisRecord, Meeting, MiniContext } from '@meetcc/shared';
 import {
@@ -12,15 +11,11 @@ import {
   MINI_CONTEXTS_KEY,
   CONTEXT_PREFIX,
   MEETING_TAGS_PREFIX,
-  appendAudit,
 } from '@meetcc/shared';
 import { db } from '../lib/db';
 import { datedCount, toChecklist, toIcs } from '@meetcc/exporters/tasks';
-import { toMarkdown } from '@meetcc/exporters/markdown';
-import { toObsidian, obsidianPath } from '@meetcc/exporters/obsidian';
-import { GATE_EVENT } from '@meetcc/exporters/gate';
+import { STALE_PROCESSING_MS } from '@meetcc/meeting';
 import { Button, TextArea, useToast } from '@meetcc/ui';
-import { lazyImport } from '../lib/lazy';
 
 function downloadBlob(name: string, blob: Blob) {
   const url = URL.createObjectURL(blob);
@@ -78,54 +73,10 @@ function ActionItemsToolbar({ meeting, analysis }: { meeting: Meeting; analysis:
   );
 }
 
-interface SummaryActionsProps {
-  onMarkdown: () => void;
-  onObsidian: () => void;
-  onPdf: () => void;
-  onDesktop: () => void;
-  onRegenerate: () => void;
-  busy: boolean;
-  exportBusy: boolean;
-  regenerateLabel: string;
-}
 
-function SummaryActions({
-  onMarkdown,
-  onObsidian,
-  onPdf,
-  onDesktop,
-  onRegenerate,
-  busy,
-  exportBusy,
-  regenerateLabel,
-}: SummaryActionsProps) {
-  return (
-    <div className="task-export summary-exports">
-      <Button variant="ghost" onClick={onMarkdown}>{t('ext.docs.markdownExport')}</Button>
-      <Button variant="ghost" onClick={onObsidian}>{t('ext.docs.obsidianExport')}</Button>
-      <Button variant="ghost" onClick={onPdf} disabled={exportBusy}>{t('ext.docs.pdfExport')}</Button>
-      <Button variant="ghost" onClick={onDesktop} disabled={exportBusy}>
-        {t('ext.docs.desktopExportDocument', { label: t('ext.summary.label') })}
-      </Button>
-      <Button variant="ghost" onClick={onRegenerate} disabled={busy}>
-        {busy ? t('ext.summary.processing') : regenerateLabel}
-      </Button>
-    </div>
-  );
-}
-
-function Result({
-  meeting,
-  analysis,
-  actions,
-}: {
-  meeting: Meeting;
-  analysis: Analysis;
-  actions: SummaryActionsProps;
-}) {
+function Result({ meeting, analysis }: { meeting: Meeting; analysis: Analysis }) {
   return (
     <>
-      <SummaryActions {...actions} />
       <div className="summary-body">
       <Section title="Executive Summary">
         <p>{analysis.executiveSummary}</p>
@@ -461,8 +412,6 @@ interface Props {
 export function SummaryView({ meeting, record, live }: Props) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
-  const [exportBusy, setExportBusy] = useState(false);
-  const exportLock = useRef(false);
   const regenerate = async () => {
     setBusy(true);
     try {
@@ -478,96 +427,6 @@ export function SummaryView({ meeting, record, live }: Props) {
       setBusy(false);
     }
   };
-  const reportDesktopError = (error: string): void => {
-    const classified = classifyBridgeError(error);
-    toast(
-      'error',
-      classified === 'not_found' || classified === 'not_registered'
-        ? t('ext.summary.desktopNotConnected')
-        : t('ext.summary.desktopFailed', { error: error || t('ext.unknownError') }),
-    );
-  };
-  const summary = record?.status === 'done' ? record.analysis : null;
-  const summaryActions: SummaryActionsProps = {
-    busy,
-    exportBusy,
-    regenerateLabel: live ? t('ext.summary.regenerateMom') : t('ext.summary.regenerate'),
-    onRegenerate: () => void regenerate(),
-    onMarkdown: () => {
-      if (!summary) return;
-      downloadBlob(
-        `${meeting.id}-summary.md`,
-        new Blob([toMarkdown(meeting, summary)], { type: 'text/markdown' }),
-      );
-      toast('success', t('ext.docs.markdownDownloaded', { label: t('ext.summary.label') }));
-    },
-    onObsidian: () => {
-      if (!summary) return;
-      const path = obsidianPath(meeting);
-      const filename = path.split(/[\\/]/).pop() || path;
-      downloadBlob(
-        filename,
-        new Blob([toObsidian(meeting, summary)], { type: 'text/markdown' }),
-      );
-      void appendAudit(GATE_EVENT, 'meetings=1').catch(() => undefined);
-      toast('success', t('ext.docs.obsidianDownloaded', { label: t('ext.summary.label') }));
-    },
-    onPdf: () => {
-      if (!summary || exportLock.current) return;
-      exportLock.current = true;
-      setExportBusy(true);
-      void (async () => {
-        try {
-          const [{ toPdf }, { orgLogoPng }] = await Promise.all([
-            lazyImport(() => import('@meetcc/exporters/pdf')),
-            lazyImport(() => import('../lib/logo')),
-          ]);
-          const diagrams: { title: string; dataUrl: string; wPx: number; hPx: number }[] = [];
-          if (summary.diagrams?.length) {
-            const { renderPng } = await lazyImport(() => import('../lib/mermaid'));
-            for (const diagram of summary.diagrams) {
-              try {
-                const rendered = await renderPng(diagram.mermaid);
-                diagrams.push({ title: diagram.title, ...rendered });
-              } catch {
-                // Skip invalid diagrams while preserving the rest of the summary.
-              }
-            }
-          }
-          downloadBlob(
-            `${meeting.id}-summary.pdf`,
-            toPdf(meeting, summary, diagrams, await orgLogoPng()),
-          );
-          toast('success', t('ext.docs.pdfDownloaded'));
-        } catch (error) {
-          toast('error', t('ext.docs.pdfFailed', { error: (error as Error).message }));
-        } finally {
-          exportLock.current = false;
-          setExportBusy(false);
-        }
-      })();
-    },
-    onDesktop: () => {
-      if (!summary || exportLock.current) return;
-      exportLock.current = true;
-      setExportBusy(true);
-      void (async () => {
-        try {
-          const response = await chrome.runtime.sendMessage({
-            type: 'bridge-deliver-meeting',
-            meetingId: meeting.id,
-          });
-          if (response?.ok) toast('success', t('ext.docs.documentSentDesktop', { label: t('ext.summary.label') }));
-          else reportDesktopError(response?.error ?? response?.reason ?? '');
-        } catch (error) {
-          reportDesktopError((error as Error).message);
-        } finally {
-          exportLock.current = false;
-          setExportBusy(false);
-        }
-      })();
-    },
-  };
 
 
 
@@ -580,7 +439,7 @@ export function SummaryView({ meeting, record, live }: Props) {
             ' · MoM sementara dari transcript sejauh ini — diganti otomatis setelah meeting selesai'}
         </div>
         <ContextCard meeting={meeting} />
-        <Result meeting={meeting} analysis={record.analysis} actions={summaryActions} />
+        <Result meeting={meeting} analysis={record.analysis} />
       </>
     );
   }
@@ -588,8 +447,8 @@ export function SummaryView({ meeting, record, live }: Props) {
   if (record?.status === 'processing') {
     const steps = ['Transcript', 'AI Processing', t('ext.summary.step.saving')];
     const active = record.step === 'ai' ? 1 : 2;
-    // taking too long usually means a crashed/hung run — offer a manual restart
-    const slow = Date.now() - Date.parse(record.startedAt) > 45_000;
+    // Only a run older than the pipeline's recovery window is offered as stalled.
+    const stale = Date.now() - Date.parse(record.startedAt) > STALE_PROCESSING_MS;
     return (
       <div className="summary-body">
         <div className="progress" role="progressbar" aria-label="AI processing">
@@ -600,10 +459,11 @@ export function SummaryView({ meeting, record, live }: Props) {
             </div>
           ))}
         </div>
-        {slow && (
+        <p className="dim">{t('ext.summary.processingInfo')}</p>
+        {stale && (
           <div className="subbar" style={{ border: 0, padding: '4px 0' }}>
             <span className="dim" style={{ fontSize: 11 }}>
-              Lama? Proses mungkin terhenti.
+              {t('ext.summary.processingStale')}
             </span>
             <Button onClick={regenerate} disabled={busy}>
               {busy ? t('ext.summary.processing') : t('ext.summary.regenerate')}

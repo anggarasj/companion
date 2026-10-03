@@ -1,13 +1,16 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { DOC_META } from '@meetcc/ai'
+import { STALE_PROCESSING_MS } from '@meetcc/meeting'
 import type { Analysis, AnalysisRecord, Meeting } from '@meetcc/shared'
 import { t } from '@meetcc/shared/i18n'
 import { ToastProvider } from '@meetcc/ui'
 import { toMarkdown } from '@meetcc/exporters/markdown'
 import { toPdf } from '@meetcc/exporters/pdf'
 import { toObsidian, obsidianPath } from '@meetcc/exporters/obsidian'
+import { DocumentOutputs } from './DocGen'
 import { SummaryView } from './SummaryView'
 import { renderPng } from '../lib/mermaid'
 
@@ -20,6 +23,8 @@ vi.mock('@meetcc/shared', async (importOriginal) => {
     getMeetingTags: vi.fn(async () => []),
     getMiniContexts: vi.fn(async () => []),
     watchStorage: vi.fn(() => () => undefined),
+    loadDocProgress: vi.fn(async () => null),
+    loadDocs: vi.fn(async () => ({})),
   }
 })
 vi.mock('../lib/db', () => ({ db: vi.fn(async () => []) }))
@@ -54,11 +59,20 @@ const analysis: Analysis = {
   nextSteps: [],
   diagrams: [{ title: 'Summary flow', type: 'flowchart', mermaid: 'flowchart TD\nA-->B' }],
 }
-const record: AnalysisRecord = {
-  status: 'done',
-  analysis,
-  generatedAt: '2026-09-28T10:05:00Z',
-  provider: 'builtin',
+function renderSummaryExportMenu(analysisToExport: Analysis = analysis, live = false) {
+  return render(
+    <ToastProvider>
+      <DocumentOutputs
+        meeting={meeting}
+        analysis={analysisToExport}
+        live={live}
+        selectedTimeline={new Set()}
+        indeterminateTimeline={new Set()}
+        onToggleTimeline={() => undefined}
+        excludedEntries={new Set()}
+      />
+    </ToastProvider>,
+  )
 }
 
 afterEach(() => {
@@ -78,14 +92,14 @@ describe('summary exports', () => {
     vi.stubGlobal('chrome', { runtime: { sendMessage } })
     vi.stubGlobal('URL', { createObjectURL: vi.fn(() => 'blob:summary'), revokeObjectURL: vi.fn() })
     const user = userEvent.setup()
-    render(
-      <ToastProvider>
-        <SummaryView meeting={meeting} record={record} live={false} />
-      </ToastProvider>,
-    )
+    renderSummaryExportMenu()
 
-    await user.click(screen.getByRole('button', { name: t('ext.docs.markdownExport') }))
-    await user.click(screen.getByRole('button', { name: t('ext.docs.obsidianExport') }))
+    await user.click(screen.getByRole('button', { name: t('ext.docs.exportResult') }))
+    await user.click(within(screen.getByRole('group', { name: t('ext.docs.exportSummaryGroup') }))
+      .getByRole('menuitem', { name: t('ext.docs.markdownExport') }))
+    await user.click(screen.getByRole('button', { name: t('ext.docs.exportResult') }))
+    await user.click(within(screen.getByRole('group', { name: t('ext.docs.exportSummaryGroup') }))
+      .getByRole('menuitem', { name: t('ext.docs.obsidianExport') }))
 
     expect(toMarkdown).toHaveBeenCalledWith(meeting, analysis)
     expect(toObsidian).toHaveBeenCalledWith(meeting, analysis)
@@ -95,13 +109,9 @@ describe('summary exports', () => {
     const sendMessage = vi.fn(async () => ({ ok: true }))
     vi.stubGlobal('chrome', { runtime: { sendMessage } })
     const user = userEvent.setup()
-    render(
-      <ToastProvider>
-        <SummaryView meeting={meeting} record={record} live />
-      </ToastProvider>,
-    )
+    renderSummaryExportMenu(analysis, true)
 
-    await user.click(screen.getByRole('button', { name: t('ext.summary.regenerateMom') }))
+    await user.click(screen.getByRole('button', { name: t('ext.summary.regenerate') }))
 
     expect(sendMessage).toHaveBeenCalledWith({
       type: 'regenerate',
@@ -116,13 +126,11 @@ describe('summary exports', () => {
     vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn() } })
     vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL })
     const user = userEvent.setup()
-    render(
-      <ToastProvider>
-        <SummaryView meeting={meeting} record={record} live={false} />
-      </ToastProvider>,
-    )
+    renderSummaryExportMenu()
 
-    await user.click(screen.getByRole('button', { name: t('ext.docs.pdfExport') }))
+    await user.click(screen.getByRole('button', { name: t('ext.docs.exportResult') }))
+    await user.click(within(screen.getByRole('group', { name: t('ext.docs.exportSummaryGroup') }))
+      .getByRole('menuitem', { name: t('ext.docs.pdfExport') }))
 
     await waitFor(() => expect(toPdf).toHaveBeenCalled())
     expect(renderPng).toHaveBeenCalledWith('flowchart TD\nA-->B')
@@ -146,13 +154,14 @@ describe('summary exports', () => {
         { title: 'Valid flow', type: 'flowchart', mermaid: 'valid diagram' },
       ],
     }
-    const twoDiagramRecord: AnalysisRecord = { ...record, analysis: twoDiagrams }
     vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn() } })
     vi.stubGlobal('URL', { ...URL, createObjectURL: vi.fn(() => 'blob:summary-pdf'), revokeObjectURL: vi.fn() })
     const user = userEvent.setup()
-    render(<ToastProvider><SummaryView meeting={meeting} record={twoDiagramRecord} live={false} /></ToastProvider>)
+    renderSummaryExportMenu(twoDiagrams)
 
-    await user.click(screen.getByRole('button', { name: t('ext.docs.pdfExport') }))
+    await user.click(screen.getByRole('button', { name: t('ext.docs.exportResult') }))
+    await user.click(within(screen.getByRole('group', { name: t('ext.docs.exportSummaryGroup') }))
+      .getByRole('menuitem', { name: t('ext.docs.pdfExport') }))
 
     await waitFor(() => expect(toPdf).toHaveBeenCalled())
     expect(renderPngMock).toHaveBeenNthCalledWith(1, 'bad diagram')
@@ -174,9 +183,11 @@ describe('summary exports', () => {
     vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn() } })
     vi.stubGlobal('URL', { ...URL, createObjectURL: vi.fn(() => 'blob:summary'), revokeObjectURL: vi.fn() })
     const user = userEvent.setup()
-    render(<ToastProvider><SummaryView meeting={meeting} record={record} live={false} /></ToastProvider>)
+    renderSummaryExportMenu()
 
-    await user.click(screen.getByRole('button', { name: t('ext.docs.obsidianExport') }))
+    await user.click(screen.getByRole('button', { name: t('ext.docs.exportResult') }))
+    await user.click(within(screen.getByRole('group', { name: t('ext.docs.exportSummaryGroup') }))
+      .getByRole('menuitem', { name: t('ext.docs.obsidianExport') }))
 
     expect(filename).toBe('summary.md')
     expect(click).toHaveBeenCalled()
@@ -187,11 +198,11 @@ describe('summary exports', () => {
     const sendMessage = vi.fn(async () => ({ ok: false, error: 'Specified native messaging host not found.' }))
     vi.stubGlobal('chrome', { runtime: { sendMessage } })
     const user = userEvent.setup()
-    render(<ToastProvider><SummaryView meeting={meeting} record={record} live={false} /></ToastProvider>)
+    renderSummaryExportMenu()
 
-    await user.click(screen.getByRole('button', {
-      name: t('ext.docs.desktopExportDocument', { label: t('ext.summary.label') }),
-    }))
+    await user.click(screen.getByRole('button', { name: t('ext.docs.exportResult') }))
+    await user.click(within(screen.getByRole('group', { name: t('ext.docs.exportSummaryGroup') }))
+      .getByRole('menuitem', { name: t('ext.docs.exportSummaryDesktop') }))
 
     expect(await screen.findByText(t('ext.summary.desktopNotConnected'))).toBeTruthy()
   })
@@ -201,47 +212,74 @@ describe('summary exports', () => {
     const sendMessage = vi.fn(() => new Promise<{ ok: boolean }>((resolve) => { resolveDelivery = resolve }))
     vi.stubGlobal('chrome', { runtime: { sendMessage } })
     const user = userEvent.setup()
-    render(<ToastProvider><SummaryView meeting={meeting} record={record} live={false} /></ToastProvider>)
-    const desktopButton = screen.getByRole('button', {
-      name: t('ext.docs.desktopExportDocument', { label: t('ext.summary.label') }),
-    })
-    const pdfButton = screen.getByRole('button', { name: t('ext.docs.pdfExport') })
+    renderSummaryExportMenu()
+    const exportButton = screen.getByRole('button', { name: t('ext.docs.exportResult') })
 
-    await user.click(desktopButton)
+    await user.click(exportButton)
+    await user.click(within(screen.getByRole('group', { name: t('ext.docs.exportSummaryGroup') }))
+      .getByRole('menuitem', { name: t('ext.docs.exportSummaryDesktop') }))
 
-    expect(desktopButton.hasAttribute('disabled')).toBe(true)
-    expect(pdfButton.hasAttribute('disabled')).toBe(true)
+    expect(exportButton.hasAttribute('disabled')).toBe(true)
     expect(toPdf).not.toHaveBeenCalled()
     resolveDelivery({ ok: true })
-    await waitFor(() => expect(desktopButton.hasAttribute('disabled')).toBe(false))
+    await waitFor(() => expect(exportButton.hasAttribute('disabled')).toBe(false))
   })
 
-  it('uses the live MoM refresh label for a completed summary', () => {
+  it('labels analysis regeneration separately from generating the selected document', () => {
     vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn() } })
-    render(<ToastProvider><SummaryView meeting={meeting} record={record} live /></ToastProvider>)
+    renderSummaryExportMenu(analysis, true)
 
-    expect(screen.getByRole('button', { name: t('ext.summary.regenerateMom') })).toBeTruthy()
+    const regenerate = screen.getByRole('button', { name: t('ext.summary.regenerate') })
+    const generate = screen.getByRole('button', {
+      name: t('ext.docs.generateDocument', { label: DOC_META.notulen.label }),
+    })
+    expect(regenerate).not.toBe(generate)
+    expect(document.querySelector('.doc-primary-actions')?.contains(regenerate)).toBe(true)
+    expect(document.querySelector('.summary-exports')).toBeNull()
   })
 
   it('sends the summary to Desktop through the summary delivery action', async () => {
     const sendMessage = vi.fn(async () => ({ ok: true }))
     vi.stubGlobal('chrome', { runtime: { sendMessage } })
     const user = userEvent.setup()
-    render(
-      <ToastProvider>
-        <SummaryView meeting={meeting} record={record} live={false} />
-      </ToastProvider>,
-    )
-
-    await user.click(
-      screen.getByRole('button', {
-        name: t('ext.docs.desktopExportDocument', { label: t('ext.summary.label') }),
-      }),
-    )
+    renderSummaryExportMenu()
+    await user.click(screen.getByRole('button', { name: t('ext.docs.exportResult') }))
+    await user.click(within(screen.getByRole('group', { name: t('ext.docs.exportSummaryGroup') }))
+      .getByRole('menuitem', { name: t('ext.docs.exportSummaryDesktop') }))
 
     expect(sendMessage).toHaveBeenCalledWith({
       type: 'bridge-deliver-meeting',
       meetingId: meeting.id,
     })
+  })
+})
+
+describe('automatic analysis status', () => {
+  it('explains post-meeting analysis without offering an early retry', () => {
+    vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn() } })
+    const record: AnalysisRecord = {
+      status: 'processing',
+      step: 'ai',
+      startedAt: new Date(Date.now() - 60_000).toISOString(),
+      provider: 'openai',
+    }
+    render(<ToastProvider><SummaryView meeting={meeting} record={record} live={false} /></ToastProvider>)
+
+    expect(screen.getByText(t('ext.summary.processingInfo'))).toBeTruthy()
+    expect(screen.queryByRole('button', { name: t('ext.summary.regenerate') })).toBeNull()
+  })
+
+  it('offers retry only after the pipeline stale threshold', () => {
+    vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn() } })
+    const record: AnalysisRecord = {
+      status: 'processing',
+      step: 'ai',
+      startedAt: new Date(Date.now() - STALE_PROCESSING_MS - 1).toISOString(),
+      provider: 'openai',
+    }
+    render(<ToastProvider><SummaryView meeting={meeting} record={record} live={false} /></ToastProvider>)
+
+    expect(screen.getByText(t('ext.summary.processingStale'))).toBeTruthy()
+    expect(screen.getByRole('button', { name: t('ext.summary.regenerate') })).toBeTruthy()
   })
 })

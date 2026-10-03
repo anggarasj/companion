@@ -272,25 +272,6 @@ export async function handleDb(req: DbRequest): Promise<unknown> {
       return { sessionId: id, entries: entries.length };
     }
 
-    // Speech-to-text without diarization labels everyone "Speaker 1"; only a
-    // human can say who that was. chrome.storage is rewritten alongside the
-    // index because it stays the source of truth a re-index reads from, so a
-    // rename that skipped it would silently revert (§30 Phase 3).
-    case 'rename-speaker': {
-      const sessionId = str(a.sessionId);
-      const from = str(a.from);
-      const to = str(a.to).trim();
-      if (!to) throw new Error(t('ext.err.emptyName'));
-      const moved = db.renameSpeaker(sessionId, from, to);
-      const key = `transcript:${sessionId}`;
-      const stored = (await chrome.storage.local.get(key))[key] as Entry[] | undefined;
-      if (stored?.length) {
-        await chrome.storage.local.set({
-          [key]: stored.map((e) => (e.speaker === from ? { ...e, speaker: to } : e)),
-        });
-      }
-      return { moved };
-    }
 
     // P2.4: the MCP server runs outside Chrome and cannot open OPFS, so the
     // bridge is an explicit snapshot the user saves and points the server at.

@@ -361,6 +361,39 @@ input:focus-visible {
 /* meeting row: select button + delete affordance revealed on hover/focus */
 .meeting-row { display: flex; align-items: center; gap: 4px; }
 .meeting-row .meeting { flex: 1; min-width: 0; }
+.meeting-select {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 0 2px;
+  accent-color: var(--phosphor);
+}
+
+.meeting-bulk {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.meeting-bulk-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.meeting-bulk-row .ui-button {
+  padding: 4px 7px;
+  font-size: 10.5px;
+}
+
+.meeting-selection-count {
+  flex: 1;
+  color: var(--text-dim);
+  font-size: 10.5px;
+}
 
 .meeting-del {
   flex: none;
@@ -587,6 +620,22 @@ input:focus-visible {
   flex-direction: column;
   gap: 12px;
 }
+.transcript-message-count {
+  flex: none;
+  padding: 4px 10px 8px;
+  color: var(--text-dim);
+  font-size: 10.5px;
+}
+
+.entry-excluded {
+  opacity: 0.58;
+}
+
+.entry-include-toggle {
+  flex: none;
+  margin: 0 0 0 auto;
+  accent-color: var(--phosphor);
+}
 
 .transcript-note {
   margin: 0 0 4px;
@@ -625,28 +674,6 @@ input:focus-visible {
 .entry-body { min-width: 0; }
 .entry-head { display: flex; align-items: baseline; gap: 8px; }
 .speaker { font-weight: 600; font-size: 12px; color: var(--phosphor); }
-/* the rename affordance must not turn every name into a button-looking thing */
-.speaker-editable {
-  background: none;
-  border: 0;
-  padding: 0;
-  font: inherit;
-  color: inherit;
-  cursor: text;
-  border-bottom: 1px dashed transparent;
-}
-.speaker-editable:hover,
-.speaker-editable:focus-visible { border-bottom-color: var(--phosphor); }
-.speaker-rename {
-  font-weight: 600;
-  font-size: 12px;
-  color: var(--phosphor);
-  background: var(--surface-2, rgba(255, 255, 255, 0.06));
-  border: 1px solid var(--phosphor);
-  border-radius: 4px;
-  padding: 0 4px;
-  width: 14ch;
-}
 .stamp { font: 400 10px/1 var(--font-mono); color: var(--text-faint); }
 .text { margin: 2px 0 0; color: var(--text); overflow-wrap: break-word; }
 
@@ -1189,6 +1216,13 @@ body[data-theme='light'] .bubble-assistant {
   gap: 8px;
   padding: 8px 16px;
 }
+.doc-primary-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 
 .doc-export-control { position: relative; }
 
@@ -1203,11 +1237,30 @@ body[data-theme='light'] .bubble-assistant {
   width: max-content;
   min-width: 220px;
   max-width: min(320px, calc(100vw - 32px));
+  max-height: min(70vh, 520px);
   padding: 9px;
+  overflow-y: auto;
   border: 1px solid var(--hairline-2);
   border-radius: 9px;
   background: var(--panel);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.32);
+}
+
+.doc-export-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.doc-export-group + .doc-export-group {
+  padding-top: 8px;
+  border-top: 1px solid var(--hairline);
+}
+
+.doc-export-group-title {
+  padding: 0 3px;
+  color: var(--phosphor);
+  font-size: 11px;
 }
 
 .doc-export-menu p {
@@ -1772,7 +1825,7 @@ body[data-theme='light'] .field-row input[list]::-webkit-calendar-picker-indicat
   border: 1px solid var(--hairline-2);
   border-radius: 8px;
   background: var(--panel);
-  overflow: hidden;
+  overflow: visible;
   text-align: left;
 }
 
@@ -2711,3 +2764,69 @@ body[data-theme='light'] .field-row input[list]::-webkit-calendar-picker-indicat
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+.meeting-content {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.meeting-view {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+
+.transcript-sidebar {
+  display: flex;
+  flex: 0 1 400px;
+  flex-direction: column;
+  min-width: 280px;
+  min-height: 0;
+  border-left: 1px solid var(--hairline);
+  background: var(--panel);
+}
+.transcript-sidebar.collapsed {
+  flex: 0 0 38px;
+  min-width: 38px;
+  align-items: center;
+}
+
+.transcript-sidebar-content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.transcript-collapse-btn,
+.transcript-expand {
+  flex: none;
+  min-width: 28px;
+  padding: 4px 7px;
+}
+
+.transcript-sidebar-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.transcript-sidebar .subbar {
+  flex: none;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+}
+
+.transcript-sidebar .transcript {
+  min-height: 0;
+  padding: 12px;
+}
+

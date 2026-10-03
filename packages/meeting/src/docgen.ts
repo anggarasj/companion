@@ -30,7 +30,7 @@ export interface DocGenDeps {
 
 export type DocGenResult =
   | { ok: true; content: string }
-  | { ok: false; reason: 'not-found' | 'empty' | 'ai-failed'; error: string };
+  | { ok: false; reason: 'not-found' | 'empty' | 'ai-failed' | 'invalid-selection'; error: string }
 
 // Module-level, one guard per worker process. Double-clicking "Generate BRD"
 // (or firing the same doc from two dashboard windows) used to start TWO AI
@@ -50,10 +50,13 @@ export function runDocGen(
   templateId: string | undefined,
   deps: DocGenDeps,
   focusTopics?: readonly TimelineItem[],
+  excludedEntryIndices?: readonly number[],
 ): Promise<DocGenResult> {
-  const scope = focusTopics?.length ? JSON.stringify(focusTopics) : ''
+  const scope = focusTopics?.length || excludedEntryIndices?.length
+    ? JSON.stringify({ topics: focusTopics ?? null, excludedEntryIndices: excludedEntryIndices ?? null })
+    : ''
   return docRuns.run(`${docGenKey(id, docType, templateId)}:${scope}`, () =>
-    runDocGenInner(id, docType, templateId, deps, focusTopics),
+    runDocGenInner(id, docType, templateId, deps, focusTopics, excludedEntryIndices),
   )
 }
 
@@ -63,6 +66,7 @@ async function runDocGenInner(
   templateId: string | undefined,
   deps: DocGenDeps,
   focusTopics?: readonly TimelineItem[],
+  excludedEntryIndices?: readonly number[],
 ): Promise<DocGenResult> {
   const startedAt = deps.now();
   try {
@@ -71,6 +75,29 @@ async function runDocGenInner(
     if (!meeting.entries.length) {
       return { ok: false, reason: 'empty', error: t('pkg.meeting.emptyTranscript') };
     }
+
+    const excluded = excludedEntryIndices?.length ? new Set(excludedEntryIndices) : null;
+    if (
+      excludedEntryIndices &&
+      excluded &&
+      (excluded.size !== excludedEntryIndices.length ||
+        excludedEntryIndices.some((index) =>
+          !Number.isInteger(index) || index < 0 || index >= meeting.entries.length,
+        ))
+    ) {
+      return {
+        ok: false,
+        reason: 'invalid-selection',
+        error: t('ext.docs.messageSelectionInvalid'),
+      };
+    }
+    const entries = excluded
+      ? meeting.entries.filter((_, index) => !excluded.has(index))
+      : meeting.entries;
+    if (!entries.length) {
+      return { ok: false, reason: 'empty', error: t('ext.docs.noMessagesSelected') };
+    }
+    const scopedMeeting = excluded ? { ...meeting, entries } : meeting;
     await deps.saveProgress(id, {
       type: docType,
       step: 0,
@@ -81,10 +108,11 @@ async function runDocGenInner(
     });
     const client = await deps.createClient();
     const template = await deps.getTemplate(templateId);
+    const analysis = excluded ? null : await deps.getAnalysis(id);
     const content = await generateDoc(
       client,
-      meeting,
-      await deps.getAnalysis(id),
+      scopedMeeting,
+      analysis,
       docType,
       async (step, total, label) => {
         await deps.saveProgress(id, {
