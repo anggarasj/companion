@@ -28,12 +28,13 @@ import { MeetingHeader } from './components/MeetingHeader';
 import { DecisionLog } from './components/DecisionLog';
 import { SettingsView } from './components/SettingsView';
 import { UpdateBanner } from './components/UpdateBanner';
+import { useGenerationScope } from './lib/generationScope';
+import { deliverMeetingsToDesktop } from './lib/desktopBulkExport';
 
-type Tab = 'summary' | 'transcript' | 'diagram' | 'ask'
+type Tab = 'summary' | 'diagram' | 'ask'
 
 const TAB_LABELS: Record<Tab, Parameters<typeof t>[0]> = {
   summary: 'ext.tab.summary',
-  transcript: 'ext.tab.transcript',
   diagram: 'ext.tab.diagram',
   ask: 'ext.tab.ask',
 };
@@ -104,6 +105,7 @@ function Shell({ initialMeeting }: { initialMeeting: string | null }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [seedQuestion, setSeedQuestion] = useState<string | undefined>();
   const [now, setNow] = useState(() => Date.now());
+  const [transcriptOpen, setTranscriptOpen] = useState(true);
   const toast = useToast();
 
   const refresh = useCallback(() => {
@@ -158,6 +160,15 @@ function Shell({ initialMeeting }: { initialMeeting: string | null }) {
 
   const selectedRecord = selected ? (records[selected.id] ?? null) : null;
   const analysis = selectedRecord?.status === 'done' ? selectedRecord.analysis : null;
+  const timeline = analysis?.timeline ?? [];
+  const {
+    excludedEntries,
+    selectedEntries,
+    selectedTimeline,
+    indeterminateTimeline,
+    toggleEntry,
+    toggleTimeline,
+  } = useGenerationScope(selected, timeline);
 
   // Deleting wipes transcript, notulen, chat and documents with no undo, so it
   // always goes through an explicit confirmation naming what is about to go.
@@ -175,6 +186,60 @@ function Shell({ initialMeeting }: { initialMeeting: string | null }) {
     void chrome.runtime.sendMessage({ type: 'db', op: 'sync-index' }).catch(() => undefined);
     if (selectedId === id) setSelectedId(null);
     toast('info', t('ext.meeting.deleted', { label }));
+  };
+  const handleDeleteMeetings = async (ids: string[]): Promise<string[] | null> => {
+    const selectedIds = new Set(ids);
+    const selectedMeetings = (meetings ?? []).filter((meeting) => selectedIds.has(meeting.id));
+    const lines = selectedMeetings.reduce((count, meeting) => count + meeting.entries.length, 0);
+    const names = ids
+      .map((id) => titles[id] || displayMeetingId(id))
+      .slice(0, 5)
+      .join('\n');
+    const more = ids.length > 5 ? `\n${t('ext.sidebar.moreMeetingNames', { count: ids.length - 5 })}` : '';
+    const confirmed = window.confirm(
+      t('ext.sidebar.confirmBulkDelete', { count: ids.length, lines, meetingNames: names + more }),
+    );
+    if (!confirmed) return null;
+
+    const failed: string[] = [];
+    let deleted = 0;
+    for (const id of ids) {
+      try {
+        await clearMeeting(id);
+        deleted++;
+        if (selectedId === id) setSelectedId(null);
+      } catch {
+        failed.push(id);
+      }
+    }
+    if (deleted) {
+      void chrome.runtime.sendMessage({ type: 'db', op: 'sync-index' }).catch(() => undefined);
+    }
+    if (failed.length) {
+      toast('error', t('ext.sidebar.meetingsDeletePartial', { deleted, total: ids.length, failed: failed.length }));
+    } else {
+      toast('success', t('ext.sidebar.meetingsDeleted', { count: deleted }));
+    }
+    return failed;
+  };
+  const handleExportMeetings = async (ids: string[]): Promise<string[]> => {
+    const failedIds = await deliverMeetingsToDesktop(ids, (message) =>
+      chrome.runtime.sendMessage(message),
+    );
+    const failed = failedIds.length;
+    if (failed) {
+      toast(
+        'error',
+        t('ext.sidebar.meetingsExportPartial', {
+          sent: ids.length - failed,
+          total: ids.length,
+          failed,
+        }),
+      );
+    } else {
+      toast('success', t('ext.sidebar.meetingsExported', { count: ids.length }));
+    }
+    return failedIds;
   };
 
   const handleClear = async () => {
@@ -218,6 +283,8 @@ function Shell({ initialMeeting }: { initialMeeting: string | null }) {
         }}
         onSearch={() => setPaletteOpen(true)}
         onDelete={(id) => void handleDelete(id)}
+        onExportMeetings={handleExportMeetings}
+        onDeleteMeetings={handleDeleteMeetings}
       />
       <main className="main">
         <UpdateBanner />
@@ -260,30 +327,82 @@ function Shell({ initialMeeting }: { initialMeeting: string | null }) {
               </nav>
             </header>
             <MeetingHeader sessionId={selected.id} onOpenMeeting={openMeeting} />
-            {tab === 'transcript' ? (
-              <Transcript
-                meeting={selected}
-                live={isLive(selected, now)}
-                onClear={handleClear}
-              />
-            ) : tab === 'diagram' ? (
-              <DiagramView
-                meeting={selected}
-                diagrams={analysis?.diagrams ?? []}
-                analysisReady={!!analysis}
-              />
-            ) : tab === 'ask' ? (
-              <AskView meeting={selected} live={isLive(selected, now)} />
-            ) : (
-              <>
-                <DocumentOutputs meeting={selected} analysis={analysis} />
-                <SummaryView
-                  meeting={selected}
-                  record={selectedRecord}
-                  live={isLive(selected, now)}
-                />
-              </>
-            )}
+            <div className="meeting-content">
+              <div className="meeting-view">
+                {tab === 'diagram' ? (
+                  <DiagramView
+                    meeting={selected}
+                    diagrams={analysis?.diagrams ?? []}
+                    analysisReady={!!analysis}
+                  />
+                ) : tab === 'ask' ? (
+                  <AskView meeting={selected} live={isLive(selected, now)} />
+                ) : (
+                  <>
+                    <DocumentOutputs
+                      meeting={selected}
+                      analysis={analysis}
+                      selectedTimeline={selectedTimeline}
+                      indeterminateTimeline={indeterminateTimeline}
+                      onToggleTimeline={toggleTimeline}
+                      live={isLive(selected, now)}
+                      excludedEntries={excludedEntries}
+                    />
+                    <SummaryView
+                      meeting={selected}
+                      record={selectedRecord}
+                      live={isLive(selected, now)}
+                    />
+                  </>
+                )}
+              </div>
+              <aside
+                className={`transcript-sidebar ${transcriptOpen ? '' : 'collapsed'}`}
+                id="meeting-transcript-sidebar"
+              >
+                {transcriptOpen ? (
+                  <>
+                    <div className="transcript-sidebar-header">
+                      <strong>{t('ext.tab.transcript')}</strong>
+                      <Button
+                        type="button"
+                        className="transcript-collapse-btn"
+                        variant="ghost"
+                        aria-label={t('ext.transcript.collapse')}
+                        title={t('ext.transcript.collapse')}
+                        aria-expanded="true"
+                        aria-controls="meeting-transcript-content"
+                        onClick={() => setTranscriptOpen(false)}
+                      >
+                        ‹
+                      </Button>
+                    </div>
+                    <div className="transcript-sidebar-content" id="meeting-transcript-content">
+                      <Transcript
+                        meeting={selected}
+                        live={isLive(selected, now)}
+                        onClear={handleClear}
+                        selectedEntries={selectedEntries}
+                        onToggleEntry={toggleEntry}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <Button
+                    type="button"
+                    className="transcript-expand"
+                    variant="ghost"
+                    aria-label={t('ext.transcript.expand')}
+                    title={t('ext.transcript.expand')}
+                    aria-expanded="false"
+                    aria-controls="meeting-transcript-content"
+                    onClick={() => setTranscriptOpen(true)}
+                  >
+                    ›
+                  </Button>
+                )}
+              </aside>
+            </div>
           </>
         ) : (
           <div className="empty-state">

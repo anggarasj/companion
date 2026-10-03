@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { t, formatDateTime } from '@meetcc/shared/i18n'
 import { DOC_META } from '@meetcc/ai'
-import { toObsidianDocument } from '@meetcc/exporters/obsidian'
+import { toMarkdown } from '@meetcc/exporters/markdown'
+import { obsidianPath, toObsidian, toObsidianDocument } from '@meetcc/exporters/obsidian'
 import { GATE_EVENT } from '@meetcc/exporters/gate'
 import { classifyBridgeError } from '../lib/bridgeError'
 import {
@@ -21,6 +22,7 @@ import {
 import { lazyImport } from '../lib/lazy'
 import { db } from '../lib/db'
 import { Button, RadioGroup, useToast } from '@meetcc/ui'
+import { TimelineScopeList } from './TimelineScopeList'
 
 const TYPES: DocType[] = ['notulen', 'brd', 'prd', 'recap']
 const EMPTY_TIMELINE: Analysis['timeline'] = []
@@ -35,11 +37,30 @@ function downloadBlob(name: string, blob: Blob) {
   URL.revokeObjectURL(url)
 }
 
-export function DocumentOutputs({ meeting, analysis }: { meeting: Meeting; analysis: Analysis | null }) {
+interface Props {
+  meeting: Meeting
+  analysis: Analysis | null
+  live: boolean
+  selectedTimeline: Set<number>
+  indeterminateTimeline: Set<number>
+  onToggleTimeline: (index: number, checked: boolean) => void
+  excludedEntries: Set<number>
+}
+
+export function DocumentOutputs({
+  meeting,
+  analysis,
+  live,
+  selectedTimeline,
+  onToggleTimeline,
+  indeterminateTimeline,
+  excludedEntries,
+}: Props) {
   const [type, setType] = useState<DocType>('notulen')
   const [docs, setDocs] = useState<MeetingDocs>({})
   const [prog, setProg] = useState<DocProgressRecord | null>(null)
   const [pdfBusy, setPdfBusy] = useState(false)
+  const [summaryBusy, setSummaryBusy] = useState(false)
   const [desktopBusy, setDesktopBusy] = useState(false)
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
   const exportMenuRef = useRef<HTMLDivElement>(null)
@@ -50,59 +71,24 @@ export function DocumentOutputs({ meeting, analysis }: { meeting: Meeting; analy
   const [templates, setTemplates] = useState<{ id: string; name: string }[]>([])
   const [templateId, setTemplateId] = useState('')
   const timeline = analysis?.timeline ?? EMPTY_TIMELINE
-  const timelineIds = useMemo(() => {
-    const occurrences = new Map<string, number>()
-    return timeline.map((item) => {
-      const identity = item.time ? `time:${item.time}` : `topic:${item.topic}`
-      const occurrence = occurrences.get(identity) ?? 0
-      occurrences.set(identity, occurrence + 1)
-      return `${identity}\u0000${occurrence}`
-    })
-  }, [timeline])
-  const [timelineSelection, setTimelineSelection] = useState<{
-    meetingId: string
-    selected: Set<string>
-    seen: Set<string>
-  }>(() => ({
-    meetingId: meeting.id,
-    selected: new Set(timelineIds),
-    seen: new Set(timelineIds),
-  }))
-  const sameMeeting = timelineSelection.meetingId === meeting.id
-  const selectedTimeline = useMemo(
-    () =>
-      new Set(
-        timelineIds.flatMap((id, index) =>
-          !sameMeeting ||
-          !timelineSelection.seen.has(id) ||
-          timelineSelection.selected.has(id)
-            ? [index]
-            : [],
-        ),
-      ),
-    [sameMeeting, timelineIds, timelineSelection],
-  )
-
-  const toggleTimeline = (index: number, checked: boolean): void => {
-    setTimelineSelection((selection) => {
-      const selected = selection.meetingId === meeting.id
-        ? new Set(selection.selected)
-        : new Set(timelineIds)
-      const seen = selection.meetingId === meeting.id
-        ? new Set(selection.seen)
-        : new Set(timelineIds)
-      for (const id of timelineIds) {
-        if (!seen.has(id)) selected.add(id)
-        seen.add(id)
+  const includedEntryCount = meeting.entries.length - excludedEntries.size
+  const regenerateSummary = async (): Promise<void> => {
+    setSummaryBusy(true)
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'regenerate',
+        meetingId: meeting.id,
+      })
+      if (response?.ok) {
+        toast('success', live ? t('ext.summary.momDone') : t('ext.summary.notesDone'))
+      } else {
+        toast('error', t('ext.failed', { error: response?.error ?? response?.reason ?? t('ext.unknownError') }))
       }
-      const id = timelineIds[index]
-      if (checked) selected.add(id)
-      else selected.delete(id)
-      if (timeline.length && !timelineIds.some((currentId) => selected.has(currentId))) {
-        return selection
-      }
-      return { meetingId: meeting.id, selected, seen }
-    })
+    } catch (error) {
+      toast('error', t('ext.failed', { error: (error as Error).message }))
+    } finally {
+      setSummaryBusy(false)
+    }
   }
 
 
@@ -169,6 +155,10 @@ export function DocumentOutputs({ meeting, analysis }: { meeting: Meeting; analy
     docType: DocType,
     announce = true,
   ): Promise<StoredDoc | null> => {
+    if (includedEntryCount <= 0) {
+      toast('error', t('ext.docs.noMessagesSelected'))
+      return null
+    }
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'generate-doc',
@@ -176,6 +166,9 @@ export function DocumentOutputs({ meeting, analysis }: { meeting: Meeting; analy
         docType,
         templateId: templateId || undefined,
         ...(timeline.length ? { timelineIndices: [...selectedTimeline].sort((a, b) => a - b) } : {}),
+        ...(excludedEntries.size
+          ? { excludedEntryIndices: [...excludedEntries].sort((a, b) => a - b) }
+          : {}),
       })
       if (!response?.ok || typeof response.content !== 'string' || !response.content.trim()) {
         toast('error', t('ext.failed', { error: response?.error ?? t('ext.docs.noOutput') }))
@@ -287,12 +280,81 @@ export function DocumentOutputs({ meeting, analysis }: { meeting: Meeting; analy
       await sendDocumentToDesktop(document)
     }
   }
+  const exportSummary = async (format: DocumentExport): Promise<void> => {
+    setExportMenuOpen(false)
+    if (!analysis) return
+
+    if (format === 'markdown') {
+      downloadBlob(
+        `${meeting.id}-summary.md`,
+        new Blob([toMarkdown(meeting, analysis)], { type: 'text/markdown' }),
+      )
+      toast('success', t('ext.docs.markdownDownloaded', { label: t('ext.summary.label') }))
+    } else if (format === 'obsidian') {
+      const path = obsidianPath(meeting)
+      const filename = path.split(/[\\/]/).pop() || path
+      downloadBlob(
+        filename,
+        new Blob([toObsidian(meeting, analysis)], { type: 'text/markdown' }),
+      )
+      void appendAudit(GATE_EVENT, 'meetings=1').catch(() => undefined)
+      toast('success', t('ext.docs.obsidianDownloaded', { label: t('ext.summary.label') }))
+    } else if (format === 'pdf') {
+      setPdfBusy(true)
+      try {
+        const [{ toPdf }, { orgLogoPng }] = await Promise.all([
+          lazyImport(() => import('@meetcc/exporters/pdf')),
+          lazyImport(() => import('../lib/logo')),
+        ])
+        const diagrams: { title: string; dataUrl: string; wPx: number; hPx: number }[] = []
+        if (analysis.diagrams?.length) {
+          const { renderPng } = await lazyImport(() => import('../lib/mermaid'))
+          for (const diagram of analysis.diagrams) {
+            try {
+              const rendered = await renderPng(diagram.mermaid)
+              diagrams.push({ title: diagram.title, ...rendered })
+            } catch {
+              // Skip invalid diagrams while preserving the rest of the summary.
+            }
+          }
+        }
+        downloadBlob(
+          `${meeting.id}-summary.pdf`,
+          toPdf(meeting, analysis, diagrams, await orgLogoPng()),
+        )
+        toast('success', t('ext.docs.pdfDownloaded'))
+      } catch (error) {
+        toast('error', t('ext.docs.pdfFailed', { error: (error as Error).message }))
+      } finally {
+        setPdfBusy(false)
+      }
+    } else {
+      setDesktopBusy(true)
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: 'bridge-deliver-meeting',
+          meetingId: meeting.id,
+        })
+        if (response?.ok) {
+          toast('success', t('ext.docs.documentSentDesktop', { label: t('ext.summary.label') }))
+        } else {
+          reportDesktopError(response?.error ?? response?.reason ?? '')
+        }
+      } catch (error) {
+        reportDesktopError((error as Error).message)
+      } finally {
+        setDesktopBusy(false)
+      }
+    }
+  }
 
 
   return (
     <div className="docgen">
       <div className="doc-output-heading">{t('ext.docs.outputHeading')}</div>
-      <p className="doc-output-hint">{t('ext.docs.outputHint')}</p>
+      <p className="doc-output-hint">
+        {t('ext.docs.outputHint', { label: meta.label })}
+      </p>
       <RadioGroup
         name={`document-output-${meeting.id}`}
         label={t('ext.docs.outputType')}
@@ -325,21 +387,13 @@ export function DocumentOutputs({ meeting, analysis }: { meeting: Meeting; analy
             <span className="doc-scope-count">{selectedTimeline.size}/{timeline.length}</span>
           </summary>
           <p className="hint">{t('ext.docs.timelineScopeHint')}</p>
-          <div className="doc-scope-list">
-            {timeline.map((item, index) => (
-              <label key={`${item.time}-${index}`}>
-                <input
-                  type="checkbox"
-                  checked={selectedTimeline.has(index)}
-                  disabled={anyRunning}
-                  onChange={(event) => toggleTimeline(index, event.target.checked)}
-                />
-                <span>
-                  <strong>{item.time || '—'}</strong> {item.topic}
-                </span>
-              </label>
-            ))}
-          </div>
+          <TimelineScopeList
+            timeline={timeline}
+            selected={selectedTimeline}
+            indeterminate={indeterminateTimeline}
+            disabled={anyRunning}
+            onToggle={onToggleTimeline}
+          />
         </details>
       )}
       <div className="doc-output-actions">
@@ -349,7 +403,7 @@ export function DocumentOutputs({ meeting, analysis }: { meeting: Meeting; analy
             aria-haspopup="menu"
             aria-expanded={exportMenuOpen}
             aria-controls={`document-export-menu-${meeting.id}`}
-            disabled={anyRunning || desktopBusy}
+            disabled={anyRunning || desktopBusy || pdfBusy}
             onClick={() => setExportMenuOpen((open) => !open)}
           >
             {t('ext.docs.exportResult')} <span aria-hidden="true">▾</span>
@@ -361,63 +415,129 @@ export function DocumentOutputs({ meeting, analysis }: { meeting: Meeting; analy
               role="menu"
               aria-label={t('ext.docs.exportResult')}
             >
-              <p>
-                {current
-                  ? t('ext.docs.exportDocumentHint', { label: meta.label })
-                  : t('ext.docs.exportTranscriptHint')}
-              </p>
-              <Button
-                type="button"
-                className="doc-export-item"
-                role="menuitem"
-                onClick={() => void exportResult('markdown')}
+              {analysis && (
+                <div
+                  className="doc-export-group"
+                  role="group"
+                  aria-label={t('ext.docs.exportSummaryGroup')}
+                >
+                  <strong className="doc-export-group-title">{t('ext.docs.exportSummaryGroup')}</strong>
+                  <Button
+                    type="button"
+                    className="doc-export-item"
+                    role="menuitem"
+                    onClick={() => void exportSummary('markdown')}
+                  >
+                    {t('ext.docs.markdownExport')}
+                  </Button>
+                  <Button
+                    type="button"
+                    className="doc-export-item"
+                    role="menuitem"
+                    onClick={() => void exportSummary('obsidian')}
+                  >
+                    {t('ext.docs.obsidianExport')}
+                  </Button>
+                  <Button
+                    type="button"
+                    className="doc-export-item"
+                    role="menuitem"
+                    disabled={pdfBusy}
+                    onClick={() => void exportSummary('pdf')}
+                  >
+                    {t('ext.docs.pdfExport')}
+                  </Button>
+                  <Button
+                    type="button"
+                    className="doc-export-item"
+                    role="menuitem"
+                    disabled={desktopBusy}
+                    onClick={() => void exportSummary('desktop')}
+                  >
+                    {t('ext.docs.exportSummaryDesktop')}
+                  </Button>
+                </div>
+              )}
+              <div
+                className="doc-export-group"
+                role="group"
+                aria-label={t('ext.docs.exportDocumentGroup')}
               >
-                {t('ext.docs.markdownExport')}
-              </Button>
-              <Button
-                type="button"
-                className="doc-export-item"
-                role="menuitem"
-                onClick={() => void exportResult('obsidian')}
-              >
-                {t('ext.docs.obsidianExport')}
-              </Button>
-              <Button
-                type="button"
-                className="doc-export-item"
-                role="menuitem"
-                disabled={pdfBusy}
-                onClick={() => void exportResult('pdf')}
-              >
-                {t('ext.docs.pdfExport')}
-              </Button>
-              <Button
-                type="button"
-                className="doc-export-item"
-                role="menuitem"
-                onClick={() => void exportResult('desktop')}
-              >
-                {current
-                  ? t('ext.docs.desktopExportDocument', { label: meta.label })
-                  : t('ext.docs.desktopExportTranscript')}
-              </Button>
+                <strong className="doc-export-group-title">{t('ext.docs.exportDocumentGroup')}</strong>
+                <p>
+                  {current
+                    ? t('ext.docs.exportDocumentHint', { label: meta.label })
+                    : t('ext.docs.exportTranscriptHint')}
+                </p>
+                <Button
+                  type="button"
+                  className="doc-export-item"
+                  role="menuitem"
+                  onClick={() => void exportResult('markdown')}
+                >
+                  {t('ext.docs.markdownExport')}
+                </Button>
+                <Button
+                  type="button"
+                  className="doc-export-item"
+                  role="menuitem"
+                  onClick={() => void exportResult('obsidian')}
+                >
+                  {t('ext.docs.obsidianExport')}
+                </Button>
+                <Button
+                  type="button"
+                  className="doc-export-item"
+                  role="menuitem"
+                  disabled={pdfBusy}
+                  onClick={() => void exportResult('pdf')}
+                >
+                  {t('ext.docs.pdfExport')}
+                </Button>
+                <Button
+                  type="button"
+                  className="doc-export-item"
+                  role="menuitem"
+                  disabled={desktopBusy}
+                  onClick={() => void exportResult('desktop')}
+                >
+                  {current
+                    ? t('ext.docs.desktopExportDocument', { label: meta.label })
+                    : t('ext.docs.desktopExportTranscript')}
+                </Button>
+              </div>
             </div>
           )}
         </div>
-        <Button
-          variant="primary"
-          type="button"
-          onClick={() => void generate(type)}
-          disabled={
-            running ||
-            (anyRunning && !active) ||
-            (timeline.length > 0 && selectedTimeline.size === 0)
-          }
-        >
-          {running
-            ? t('ext.docs.generatingPercent', { label: meta.label, pct })
-            : t('ext.docs.generateDocument')}
-        </Button>
+        <div className="doc-primary-actions">
+          {analysis && (
+            <Button
+              type="button"
+              variant="ghost"
+              title={t('ext.summary.reanalyzeHint')}
+              onClick={() => void regenerateSummary()}
+              disabled={summaryBusy}
+            >
+              {summaryBusy ? t('ext.summary.processing') : t('ext.summary.regenerate')}
+            </Button>
+          )}
+          <Button
+            variant="primary"
+            type="button"
+            onClick={() => void generate(type)}
+            title={t('ext.docs.generateDocumentHint', { label: meta.label })}
+            disabled={
+              running ||
+              (anyRunning && !active) ||
+              (timeline.length > 0 && selectedTimeline.size === 0) ||
+              includedEntryCount === 0
+            }
+          >
+            {running
+              ? t('ext.docs.generatingPercent', { label: meta.label, pct })
+              : t('ext.docs.generateDocument', { label: meta.label })}
+          </Button>
+        </div>
       </div>
 
       {running ? (

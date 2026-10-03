@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AIError, type AIClient } from '@meetcc/ai';
-import type { Meeting } from '@meetcc/shared';
+import type { Analysis, Meeting } from '@meetcc/shared';
 import { runDocGen, type DocGenDeps } from './docgen';
 
 // Promise.withResolvers needs lib ES2024; the repo targets ES2022.
@@ -164,6 +164,57 @@ describe('runDocGen double-submit guard', () => {
     expect(differentScopes.every((result) => result.ok)).toBe(true)
     expect(calls).toHaveLength(6)
   })
+});
+describe('runDocGen transcript selection', () => {
+  it('excludes unchecked lines and their full-analysis summary from the AI prompt', async () => {
+    const sourceMeeting: Meeting = {
+      ...meeting,
+      id: 'm-filtered',
+      entries: [
+        { speaker: 'A', text: 'Keep this statement', time: '2026-07-13T01:00:05Z' },
+        { speaker: 'B', text: 'Exclude this statement', time: '2026-07-13T01:01:05Z' },
+        { speaker: 'C', text: 'Keep this follow-up', time: '2026-07-13T01:02:05Z' },
+      ],
+    };
+    const analysis: Analysis = {
+      executiveSummary: 'ANALYSIS_FROM_EXCLUDED_LINES',
+      timeline: [],
+      keyDiscussions: [],
+      decisions: [],
+      actionItems: [],
+      risks: [],
+      openQuestions: [],
+      nextSteps: [],
+      diagrams: [],
+    };
+    const prompts: string[] = [];
+    const client = clientOf(async ({ user }) => {
+      prompts.push(user);
+      return FINE;
+    });
+    const { deps } = makeDeps(client, {
+      getMeeting: vi.fn(async () => sourceMeeting),
+      getAnalysis: vi.fn(async () => analysis),
+    });
+
+    const result = await runDocGen('m-filtered', 'notulen', undefined, deps, undefined, [1]);
+
+    expect(result.ok).toBe(true);
+    expect(prompts[0]).toContain('Keep this statement');
+    expect(prompts[0]).toContain('Keep this follow-up');
+    expect(prompts[0]).not.toContain('Exclude this statement');
+    expect(prompts[0]).not.toContain('ANALYSIS_FROM_EXCLUDED_LINES');
+  });
+
+  it('rejects an empty message selection before starting AI work', async () => {
+    const client = clientOf(async () => FINE);
+    const { deps } = makeDeps(client);
+
+    const result = await runDocGen('m-empty-selection', 'notulen', undefined, deps, undefined, [0]);
+
+    expect(result).toMatchObject({ ok: false, reason: 'empty' });
+    expect(deps.createClient).not.toHaveBeenCalled();
+  });
 });
 
 describe('runDocGen behaviour', () => {

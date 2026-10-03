@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BackupFile, IntegrationSettings, Settings } from '@meetcc/shared';
 import { db } from '../lib/db';
 import { sendMessage } from '../lib/sendMessage';
@@ -41,11 +41,11 @@ function downloadText(name: string, text: string | Blob, type = 'application/jso
  * unregistered host looked exactly like a working one: the checkbox stayed
  * ticked and nothing ever arrived. This is the only place that says so.
  */
-function BridgeStatus() {
+function BridgeStatus({ enabled }: { enabled: boolean }) {
   const [state, setState] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
   const [detail, setDetail] = useState('');
 
-  const test = async () => {
+  const test = useCallback(async () => {
     setState('testing');
     try {
       await sendMessage({ type: 'bridge-ping' });
@@ -55,7 +55,16 @@ function BridgeStatus() {
       setDetail((e as Error).message);
       setState('fail');
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (enabled) {
+      void test();
+    } else {
+      setState('idle');
+      setDetail('');
+    }
+  }, [enabled, test]);
 
   return (
     <div className="field bridge-status">
@@ -66,14 +75,25 @@ function BridgeStatus() {
         {state === 'ok' && <span className="ok">{t('ext.bridge.connected')}</span>}
         {state === 'fail' && <span className="warn">{t('ext.bridge.notConnected')}</span>}
       </div>
-      {state === 'fail' && (
-        <span className="hint">
-          {t('ext.bridge.fixHint', { detail, command: '\u0000' })
-            .split('\u0000')
-            .flatMap((part, i) =>
-              i === 0 ? [part] : [<code key={i}>companion install</code>, part],
-            )}
-        </span>
+      {enabled && state === 'fail' && (
+        <>
+          <span className="hint">{t('ext.integrations.desktopUnavailable')}</span>
+          <a
+            className="version-btn"
+            href="https://github.com/suiflex/companion/releases/latest"
+            target="_blank"
+            rel="noreferrer"
+          >
+            {t('ext.integrations.downloadDesktop')}
+          </a>
+          <span className="hint">
+            {t('ext.bridge.fixHint', { detail, command: '\u0000' })
+              .split('\u0000')
+              .flatMap((part, i) =>
+                i === 0 ? [part] : [<code key={i}>companion install</code>, part],
+              )}
+          </span>
+        </>
       )}
     </div>
   );
@@ -131,7 +151,7 @@ export function IntegrationsPanel({
         <span className="hint">{t('ext.integrations.bridgeHint')}</span>
       </label>
 
-      <BridgeStatus />
+      <BridgeStatus enabled={settings.desktopBridge} />
 
       <fieldset className="field-group">
         <legend>{t('ext.tracker.legend')}</legend>
@@ -674,6 +694,7 @@ export function VersionPanel() {
               <span>{t('ext.version.downloadZip')}</span>
             </a>
           </div>
+          <p className="hint">{t('ext.version.chromeZipHint')}</p>
           <ol className="version-steps">
             <li>{t('ext.version.chromeStep1')}</li>
             <li>{t('ext.version.chromeStep2')}</li>

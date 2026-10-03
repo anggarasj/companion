@@ -395,15 +395,41 @@ function resolveTimelineSelection(
   return topics.length ? { topics } : { error: t('ext.docs.timelineSelectionInvalid') }
 }
 
+function resolveEntryExclusions(value: unknown): { indices?: number[]; error?: string } {
+  if (value === undefined) return {}
+  if (!Array.isArray(value)) return { error: t('ext.docs.messageSelectionInvalid') }
+  const indices: number[] = []
+  const seen = new Set<number>()
+  for (const index of value) {
+    if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) {
+      return { error: t('ext.docs.messageSelectionInvalid') }
+    }
+    if (seen.has(index)) continue
+    seen.add(index)
+    indices.push(index)
+  }
+  return indices.length ? { indices } : {}
+}
+
 async function handleGenerateDoc(
   id: string,
   docType: DocType,
   templateId?: string,
   timelineIndices?: unknown,
+  excludedEntryIndices?: unknown,
 ): Promise<{ ok: true; content: string } | { ok: false; error: string }> {
   const selection = resolveTimelineSelection(timelineIndices, await analysisOf(id))
+  const entryExclusions = resolveEntryExclusions(excludedEntryIndices)
+  if (entryExclusions.error) return { ok: false, error: entryExclusions.error }
   if (selection.error) return { ok: false, error: selection.error }
-  const res = await runDocGen(id, docType, templateId, docGenDeps, selection.topics)
+  const res = await runDocGen(
+    id,
+    docType,
+    templateId,
+    docGenDeps,
+    selection.topics,
+    entryExclusions.indices,
+  )
   return res.ok ? res : { ok: false, error: res.error };
 }
 
@@ -834,7 +860,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true; // async response
   }
   if (msg?.type === 'generate-doc' && msg.meetingId && msg.docType) {
-    handleGenerateDoc(msg.meetingId, msg.docType as DocType, msg.templateId, msg.timelineIndices)
+    handleGenerateDoc(msg.meetingId, msg.docType as DocType, msg.templateId, msg.timelineIndices, msg.excludedEntryIndices)
       .then(sendResponse)
       .catch((e) => sendResponse({ ok: false, error: (e as Error).message }));
     return true; // async response

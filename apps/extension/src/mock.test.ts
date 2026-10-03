@@ -46,10 +46,45 @@ describe('standalone dev mock', () => {
 
   it('loadDashboard returns parsed meetings and analyses', async () => {
     const dash = await loadDashboard();
-    expect(dash.meetings.length).toBe(25);
+    expect(dash.meetings.length).toBe(26);
     expect(dash.meetings[0].id).toBe('meet/arch-sync-2026');
     expect(dash.records['meet/arch-sync-2026']).toBeDefined();
     expect(dash.titles['meet/arch-sync-2026']).toBe('Q3 System Architecture & Performance Review');
+  });
+  it('seeds one long transcript with more than ten document topics', async () => {
+    const dash = await loadDashboard();
+    const id = 'meet/topic-scope-stress-test';
+    const meeting = dash.meetings.find((item) => item.id === id);
+    const record = dash.records[id];
+
+    expect(meeting?.entries.length).toBeGreaterThan(40);
+    expect(record?.status).toBe('done');
+    if (record?.status === 'done') {
+      expect(record.analysis.timeline.length).toBeGreaterThan(10);
+    }
+  });
+
+  it('adds new sample meetings to existing preview data without overwriting edits', async () => {
+    const id = 'meet/topic-scope-stress-test';
+    const existingTitle = 'My local meeting title';
+    const stored = JSON.parse(
+      window.localStorage.getItem('meetcc_dev_storage') ?? '{}',
+    ) as Record<string, unknown>;
+    stored['title:meet/arch-sync-2026'] = existingTitle;
+    for (const suffix of ['meta', 'title', 'context', 'tags', 'transcript', 'analysis']) {
+      delete stored[`${suffix}:${id}`];
+    }
+    window.localStorage.setItem('meetcc_dev_storage', JSON.stringify(stored));
+    const win = window as unknown as { chrome?: unknown; __resetDevData?: () => void };
+    delete win.chrome;
+    delete win.__resetDevData;
+    // Re-import to rerun the mock's startup seeding after restoring existing local data.
+    vi.resetModules();
+    await import('./mock');
+
+    const dashboard = await loadDashboard();
+    expect(dashboard.titles['meet/arch-sync-2026']).toBe(existingTitle);
+    expect(dashboard.meetings.some((item) => item.id === id)).toBe(true);
   });
 
   it('supports getting specific keys and arrays of keys', async () => {
@@ -147,6 +182,25 @@ describe('standalone dev mock', () => {
       type: 'bridge-export-document',
       meetingId: 'meet/arch-sync-2026',
       docType: 'brd',
+    }) as { ok: boolean; error: string };
+    expect(response).toEqual({
+      ok: false,
+      error: t('ext.docs.desktopPreviewUnavailable'),
+    });
+  });
+  it('does not claim multi-meeting delivery success in the local preview', async () => {
+    const response = await chrome.runtime.sendMessage({
+      type: 'bridge-deliver-meeting',
+      meetingId: 'meet/arch-sync-2026',
+    }) as { ok: boolean; error: string };
+    expect(response).toEqual({
+      ok: false,
+      error: t('ext.docs.desktopPreviewUnavailable'),
+    });
+  });
+  it('does not report Desktop connected in the local preview', async () => {
+    const response = await chrome.runtime.sendMessage({
+      type: 'bridge-ping',
     }) as { ok: boolean; error: string };
     expect(response).toEqual({
       ok: false,

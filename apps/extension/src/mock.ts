@@ -364,7 +364,12 @@ async function handleMockRuntimeMessage(msg: unknown): Promise<unknown> {
   if (m?.type === 'generate-doc') {
     return { ok: false, error: t('ext.docs.previewUnavailable') };
   }
-  if (m?.type === 'bridge-deliver-transcript' || m?.type === 'bridge-export-document') {
+  if (
+    m?.type === 'bridge-ping' ||
+    m?.type === 'bridge-deliver-transcript' ||
+    m?.type === 'bridge-export-document' ||
+    m?.type === 'bridge-deliver-meeting'
+  ) {
     return { ok: false, error: t('ext.docs.desktopPreviewUnavailable') };
   }
   if (m?.type === 'global-ask') {
@@ -455,9 +460,9 @@ function setupMock(): void {
     }
   }
 
-  // Seed initial data if empty or has fewer than 25 meetings
-  const meetingCount = Object.keys(memory).filter((k) => k.startsWith('meta:')).length;
-  if (meetingCount < 25) {
+  // Merge newly added sample meetings without replacing saved localhost edits.
+  const missingSeed = MOCK_SEEDS.some((seed) => !memory[`meta:${seed.id}`]);
+  if (missingSeed) {
     const initial = createInitialStorage();
     memory = { ...initial, ...memory };
     setStorageItem(STORAGE_KEY, JSON.stringify(memory));
