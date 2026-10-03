@@ -17,6 +17,19 @@
 
 * **extension:** keep the mini-context picker visible beyond its card
 
+## [1.18.0](https://github.com/suiflex/companion/compare/v1.17.0...v1.18.0) (2026-10-03)
+
+
+### Features
+
+* **extension:** coordinate transcript and meeting actions ([b27f8ec](https://github.com/suiflex/companion/commit/b27f8ec630764f735d290f12b47a75550d8b99b4))
+* improve extension meeting workflows ([7d1d6c8](https://github.com/suiflex/companion/commit/7d1d6c8ed5cf71980766b11acdaa1d4b1f9cf920))
+
+
+### Bug Fixes
+
+* **extension:** recover stale meeting analysis ([fea54d1](https://github.com/suiflex/companion/commit/fea54d1f1752363d64a0ab010225b07c2475be65))
+
 ## [1.17.0](https://github.com/suiflex/companion/compare/v1.16.1...v1.17.0) (2026-10-02)
 
 
