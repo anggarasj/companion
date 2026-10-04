@@ -11,6 +11,7 @@
 * **extension:** sync topic-range selection with transcript messages
 * **extension:** add bulk deletion for selected meetings
 * **extension:** surface Desktop bridge setup guidance
+* **extension:** merge transcripts from multiple meetings into one session
 * **extension:** recover stale meeting analysis runs
 
 ### Bug Fixes

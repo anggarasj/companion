@@ -143,6 +143,26 @@ function store(obj) {
     die()
   }
 }
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'local' || !meetingId || !storageKey) return
+  const mergeMarker = changes[`merge-sources:${meetingId}`]
+  const updated = changes[storageKey]?.newValue
+  if (!mergeMarker || !Array.isArray(updated)) return
+
+  const byCaption = new Map()
+  for (const entry of updated) {
+    const key = `${entry.time}\0${entry.speaker}\0${entry.text}`
+    const matches = byCaption.get(key) || []
+    matches.push(entry)
+    byCaption.set(key, matches)
+  }
+  for (const [element, previous] of seen) {
+    const key = `${previous.time}\0${previous.speaker}\0${previous.text}`
+    const match = byCaption.get(key)?.shift()
+    if (match) seen.set(element, match)
+  }
+  entries = updated
+})
 
 // A Meet/Teams/Zoom link is a ROOM, not a meeting: the same link is reused every
 // week. The session id (room + start) is decided by the service worker, which

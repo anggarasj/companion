@@ -10,6 +10,8 @@ import {
   displayMeetingId,
   isLive,
   loadDashboard,
+  mergeStoredMeetings,
+  parseMeetingMergeSelection,
   saveTitle,
   watchStorage,
   type AnalysisRecord,
@@ -35,6 +37,7 @@ import { SettingsView } from './components/SettingsView';
 import { UpdateBanner } from './components/UpdateBanner';
 import { useGenerationScope } from './lib/generationScope';
 import { deliverMeetingsToDesktop } from './lib/desktopBulkExport';
+import { db } from './lib/db';
 
 type Tab = 'summary' | 'diagram' | 'ask';
 
@@ -238,6 +241,44 @@ function Shell({ initialMeeting }: { initialMeeting: string | null }) {
     }
     return failed;
   };
+  const handleMergeMeetings = async (ids: string[], targetId: string): Promise<boolean> => {
+    const targetLabel = titles[targetId] || displayMeetingId(targetId);
+    const sourceNames: string[] = [];
+    for (const id of ids) {
+      if (id !== targetId) sourceNames.push(titles[id] || displayMeetingId(id));
+    }
+    const shownSources = sourceNames.slice(0, 5).join('\n');
+    const moreSources =
+      sourceNames.length > 5
+        ? `\n${t('ext.sidebar.moreMeetingNames', { count: sourceNames.length - 5 })}`
+        : '';
+    const confirmed = window.confirm(
+      t('ext.sidebar.confirmMergeMeetings', {
+        count: ids.length,
+        target: targetLabel,
+        sources: shownSources + moreSources,
+      }),
+    );
+    if (!confirmed) return false;
+
+    try {
+      const result = await mergeStoredMeetings(parseMeetingMergeSelection(ids, targetId));
+      await db('sync-index');
+      setSelectedId(targetId);
+      refresh();
+      toast(
+        'success',
+        t('ext.sidebar.meetingsMerged', {
+          sources: result.sourceIds.length,
+          entries: result.entries,
+        }),
+      );
+      return true;
+    } catch (error) {
+      toast('error', (error as Error).message);
+      return false;
+    }
+  };
   const handleExportMeetings = async (ids: string[]): Promise<string[]> => {
     const failedIds = await deliverMeetingsToDesktop(ids, (message) =>
       chrome.runtime.sendMessage(message),
@@ -301,6 +342,7 @@ function Shell({ initialMeeting }: { initialMeeting: string | null }) {
         onDelete={(id) => void handleDelete(id)}
         onExportMeetings={handleExportMeetings}
         onDeleteMeetings={handleDeleteMeetings}
+        onMergeMeetings={handleMergeMeetings}
       />
       <main className="main">
         <UpdateBanner />

@@ -231,6 +231,14 @@ export const en = {
   'ext.sidebar.confirmBulkDelete':
     'Delete {count} selected meetings ({lines} transcript lines)? This permanently removes their transcripts, notes, chat, and documents.\n\n{meetingNames}',
   'ext.sidebar.moreMeetingNames': '…and {count} more',
+  'ext.sidebar.mergeTarget': 'Keep as main meeting',
+  'ext.sidebar.mergeSelectedMeetings': 'Merge {count} meetings',
+  'ext.sidebar.mergingMeetings': 'Merging meetings…',
+  'ext.sidebar.confirmMergeMeetings':
+    'Merge {count} meetings into “{target}”? Their transcripts will be combined by time. The source meetings listed below will be deleted, and generated results on the destination will be cleared so you can regenerate them.\n\n{sources}',
+  'ext.sidebar.meetingsMerged': 'Merged {sources} meetings into one transcript ({entries} lines).',
+  'ext.sidebar.liveSourceMergeBlocked': 'Only one meeting can be live: choose it as the destination and merge ended meetings into it.',
+  'ext.sidebar.mergeSelectionRequired': 'Select at least two meetings and choose a destination.',
 
   // -- extension: meeting header -------------------------------------------
   'ext.header.contextPlaceholder': 'Meeting context & goals (optional)',

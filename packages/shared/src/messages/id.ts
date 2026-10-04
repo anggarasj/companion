@@ -228,6 +228,14 @@ export const id: Record<keyof typeof en, string> = {
   'ext.sidebar.confirmBulkDelete':
     'Hapus {count} rapat terpilih ({lines} baris transcript)? Transcript, notulen, chat, dan dokumen akan dihapus permanen.\n\n{meetingNames}',
   'ext.sidebar.moreMeetingNames': '…dan {count} lainnya',
+  'ext.sidebar.mergeTarget': 'Jadikan rapat utama',
+  'ext.sidebar.mergeSelectedMeetings': 'Gabung {count} rapat',
+  'ext.sidebar.mergingMeetings': 'Menggabungkan rapat…',
+  'ext.sidebar.confirmMergeMeetings':
+    'Gabungkan {count} rapat ke “{target}”? Transcript akan disatukan berdasarkan waktu. Rapat sumber di bawah akan dihapus, dan hasil yang sudah dibuat di rapat tujuan akan dibersihkan agar bisa dibuat ulang.\n\n{sources}',
+  'ext.sidebar.meetingsMerged': '{sources} rapat digabung jadi satu transcript ({entries} baris).',
+  'ext.sidebar.liveSourceMergeBlocked': 'Hanya satu rapat yang boleh berlangsung: jadikan rapat itu tujuan, lalu gabungkan rapat yang sudah selesai.',
+  'ext.sidebar.mergeSelectionRequired': 'Pilih minimal dua rapat dan tentukan rapat tujuan.',
 
   // -- extension: meeting header -------------------------------------------
   'ext.header.contextPlaceholder': 'Konteks & tujuan rapat (opsional)',

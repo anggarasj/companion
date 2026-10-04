@@ -23,18 +23,28 @@ const meetings: Meeting[] = [
     meta: { id: 'project-sync-2', startedAt: '2026-09-21T10:00:00Z', lastSeenAt: '2026-09-21T10:30:00Z' },
     entries: [{ speaker: 'Dimas', text: 'Review milestone.', time: '2026-09-21T10:10:00Z' }],
   },
+  {
+    id: 'project-sync-3',
+    meta: { id: 'project-sync-3', startedAt: '2026-09-22T09:00:00Z', lastSeenAt: '2026-09-22T09:59:58Z' },
+    entries: [{ speaker: 'Rani', text: 'Tindak lanjut.', time: '2026-09-22T09:10:00Z' }],
+  },
 ]
 
 function renderSidebar(
   onExportMeetings: (ids: string[]) => Promise<string[]>,
   onDeleteMeetings: (ids: string[]) => Promise<string[] | null> = async () => [],
+  onMergeMeetings: (ids: string[], targetId: string) => Promise<boolean> = async () => true,
 ) {
   return render(
     <Sidebar
       meetings={meetings}
       loading={false}
       records={{} as Record<string, AnalysisRecord>}
-      titles={{ 'project-sync-1': 'Project Sync 1', 'project-sync-2': 'Project Sync 2' }}
+      titles={{
+        'project-sync-1': 'Project Sync 1',
+        'project-sync-2': 'Project Sync 2',
+        'project-sync-3': 'Project Sync 3',
+      }}
       now={Date.parse('2026-09-22T10:00:00Z')}
       selectedId={null}
       activeView='meeting'
@@ -46,6 +56,7 @@ function renderSidebar(
       onDelete={vi.fn()}
       onExportMeetings={onExportMeetings}
       onDeleteMeetings={onDeleteMeetings}
+      onMergeMeetings={onMergeMeetings}
     />,
   )
 }
@@ -105,6 +116,49 @@ describe('sidebar multi-meeting export', () => {
     await waitFor(() => expect(onDeleteMeetings).toHaveBeenCalledTimes(2))
     expect(onDeleteMeetings).toHaveBeenNthCalledWith(2, ['project-sync-2'])
     expect(screen.queryByRole('checkbox', { name: /Project Sync/ })).toBeNull()
+  })
+
+  it('merges any selected number into the explicitly chosen destination', async () => {
+    const onMergeMeetings = vi.fn(async () => true)
+    vi.stubGlobal('chrome', {
+      storage: { local: { get: vi.fn(async () => ({})), set: vi.fn(async () => undefined) } },
+    })
+    const user = userEvent.setup()
+    renderSidebar(vi.fn(async () => []), async () => [], onMergeMeetings)
+
+    await user.click(screen.getByRole('button', { name: t('ext.sidebar.selectMeetings') }))
+    await user.click(screen.getByRole('checkbox', { name: /Project Sync 1/ }))
+    await user.click(screen.getByRole('checkbox', { name: /Project Sync 2/ }))
+    await user.click(screen.getByRole('checkbox', { name: /Project Sync 3/ }))
+    await user.selectOptions(screen.getByLabelText(t('ext.sidebar.mergeTarget')), 'project-sync-3')
+    await user.click(
+      screen.getByRole('button', { name: t('ext.sidebar.mergeSelectedMeetings', { count: 3 }) }),
+    )
+
+    await waitFor(() =>
+      expect(onMergeMeetings).toHaveBeenCalledWith(
+        ['project-sync-1', 'project-sync-2', 'project-sync-3'],
+        'project-sync-3',
+      ),
+    )
+    expect(screen.queryByRole('checkbox', { name: /Project Sync/ })).toBeNull()
+  })
+  it('blocks merging an active source into an ended destination', async () => {
+    vi.stubGlobal('chrome', {
+      storage: { local: { get: vi.fn(async () => ({})), set: vi.fn(async () => undefined) } },
+    })
+    const user = userEvent.setup()
+    renderSidebar(vi.fn(async () => []))
+
+    await user.click(screen.getByRole('button', { name: t('ext.sidebar.selectMeetings') }))
+    await user.click(screen.getByRole('checkbox', { name: /Project Sync 1/ }))
+    await user.click(screen.getByRole('checkbox', { name: /Project Sync 3/ }))
+    await user.selectOptions(screen.getByLabelText(t('ext.sidebar.mergeTarget')), 'project-sync-1')
+
+    expect(screen.getByText(t('ext.sidebar.liveSourceMergeBlocked'))).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: t('ext.sidebar.mergeSelectedMeetings', { count: 2 }) }),
+    ).toHaveProperty('disabled', true)
   })
 
   it('cancels selection and clears all checked meetings', async () => {
