@@ -487,7 +487,6 @@ export function Sidebar({
                 variant="ghost"
                 disabled={shown.length === 0 || exporting || deleting || merging}
                 onClick={toggleVisibleMeetings}
-                onClick={toggleVisibleMeetings}
               >
                 {allVisibleSelected ? t('ext.sidebar.clearVisibleSelection') : t('ext.sidebar.selectVisibleMeetings')}
               </Button>
