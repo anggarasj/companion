@@ -92,7 +92,7 @@ Where to go:
 
 | Change | Start at |
 | --- | --- |
-| capture broke on Meet/Teams | `apps/extension/public/content.js`, table `KNOWN` |
+| capture broke on Meet/Teams/Zoom | `apps/extension/public/content.js`, table `KNOWN` for Meet |
 | meeting → note delivery | `apps/extension/src/background.ts` `deliverToDesktop`, then `packages/vault/src/bridge.ts` |
 | host registration, from the CLI | `scripts/nativeHost.mjs`, called from `scripts/companion.mjs` |
 | host registration, from the app | `apps/desktop/src-tauri/src/install.rs` + `InstallView.tsx` |
@@ -113,14 +113,17 @@ Where to go:
 ## Capture
 
 Live capture runs in `apps/extension/public/content.js` (plain JS, no build
-step, shipped as-is). Two platforms:
+step, shipped as-is). Three platforms:
 
 - **Google Meet** — the implicit branch; selector table `KNOWN` near the top,
   plus a class-independent avatar heuristic as fallback.
 - **Microsoft Teams** — `teams.microsoft.com`, `teams.live.com`,
   `teams.cloud.microsoft`; gated by the `TEAMS` boolean at the top of the file.
+- **Zoom Web** — `*.zoom.us/wc/*` and `*.zoom.us/j/*`; reads live subtitle overlay rows. The overlay
+  may contain only an avatar or initial, so full speaker names are not guaranteed.
+  Turn captions on in Zoom first; the off-state control is not auto-clicked.
 
-**Zoom is import-only** (transcript file or audio), no live capture — see
+Zoom transcript files and audio can still be imported through
 `packages/meeting/src/import.ts`.
 
 Meet rotates obfuscated class names every few months, so `KNOWN` rots. When

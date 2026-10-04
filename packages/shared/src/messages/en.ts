@@ -27,6 +27,9 @@ export const en = {
   'desktop.vault.empty': 'No notes yet.',
   'desktop.vault.noMatches': 'No notes match this search.',
   'desktop.vault.bodyHit': 'matched inside the note body',
+  'desktop.vault.viewMode': 'Note view',
+  'desktop.vault.viewTree': 'Tree view (folders)',
+  'desktop.vault.viewList': 'List view',
 
   // -- desktop: inbox -------------------------------------------------------
   'desktop.inbox.kicker': 'Incoming meetings',
@@ -44,6 +47,18 @@ export const en = {
   'desktop.editor.saving': 'saving…',
   'desktop.editor.updated': 'updated {date}',
   'desktop.editor.trash': 'Move to trash',
+  'desktop.editor.export': 'Export…',
+  'desktop.export.title': 'Export',
+  'desktop.export.format': 'Export format',
+  'desktop.export.formatMarkdown': 'Markdown & CSV',
+  'desktop.export.formatHtml': 'HTML',
+  'desktop.export.formatPdf': 'PDF',
+  'desktop.export.includeProperties': 'Include properties',
+  'desktop.export.includeTitle': 'Include page title',
+  'desktop.export.action': 'Export',
+  'desktop.export.cancel': 'Cancel',
+  'desktop.export.success': 'Exported {filename}',
+  'desktop.export.failed': 'Export failed: {error}',
   'desktop.editor.save': 'Save',
   'desktop.editor.saveCopy': 'Save a copy',
   'desktop.editor.newNoteTitle': 'New note',
@@ -179,7 +194,7 @@ export const en = {
   'ext.meeting.deleted': 'Meeting {label} deleted.',
   'ext.empty.title': 'No meetings recorded yet.',
   'ext.empty.hint':
-    'Join a Google Meet — captions turn on by themselves, and the transcript and AI notes appear here.',
+    'Join Google Meet, Microsoft Teams, or Zoom Web to capture captions here. Turn captions on in Zoom first.',
 
   // -- extension: sidebar ---------------------------------------------------
   'ext.sidebar.theme': 'Theme: {mode}',
@@ -992,6 +1007,8 @@ export const en = {
   'desktop.panes.vaults': 'Show or hide the vault list',
   'desktop.panes.files': 'Show or hide the file tree',
   'desktop.panes.ai': 'Show or hide the AI panel',
+  'desktop.board.new': 'New whiteboard',
+  'desktop.board.untitled': 'Whiteboard',
   'desktop.file.reveal': 'Show in Finder',
   'desktop.file.unsupported': '{ext} files cannot be opened in Companion',
   'desktop.file.unsupportedHint': 'Companion opens Markdown notes, PDFs and images. This file stays in the vault untouched — open it from Finder with the app it belongs to.',

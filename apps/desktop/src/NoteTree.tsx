@@ -13,11 +13,6 @@ import { Tip } from '@/components/Tip'
 
 const KEY = 'companion:collapsed-folders'
 
-/** Per-folder actions stay hidden until the row is touched, so a sidebar of
- *  folders is not a wall of icons. */
-const ROW_ACTION =
-  'grid h-7 w-[26px] flex-none place-items-center rounded-md text-muted-foreground opacity-0 hover:bg-muted hover:text-primary focus-visible:opacity-100 group-hover/row:opacity-100'
-
 /** The whole row as one line, for a title the tree had to truncate. */
 function rowTooltip(n: TreeNote): string {
   const date = n.updatedAt ? formatDate(n.updatedAt) : ''
@@ -88,7 +83,7 @@ export function NoteTree({
     const FolderIcon = isCollapsed ? Folder : FolderOpen
     return (
       <li key={folder.path} className="group/tree min-w-0">
-        <div className="group/row flex min-w-0 items-center gap-1">
+        <div className="group/row relative flex min-w-0 items-center">
           {renaming === folder.path ? (
             <Input
               className="h-7"
@@ -109,7 +104,7 @@ export function NoteTree({
             <button
               type="button"
               className={cn(
-                'group/folder flex min-h-7 w-full min-w-0 flex-1 items-center gap-1.5 rounded-md py-1 pl-0.5 pr-2 text-left text-[13px] font-semibold leading-snug text-foreground transition-colors hover:bg-muted',
+                'group/folder flex min-h-7 w-full min-w-0 flex-1 items-center gap-1.5 rounded-md py-1 pl-1 pr-2 text-left text-[13px] font-semibold leading-snug text-foreground transition-colors hover:bg-muted',
                 over === folder.path && 'bg-muted ring-1 ring-inset ring-primary',
               )}
               aria-expanded={!isCollapsed}
@@ -138,42 +133,44 @@ export function NoteTree({
               <FolderIcon className="size-4 flex-none text-muted-foreground" aria-hidden="true" />
               <span className="flex-1 truncate">{folder.name}</span>
               {total > 0 && (
-                <span className="flex-none text-[11px] font-normal leading-none tabular-nums text-muted-foreground">
+                <span className="flex-none text-[11px] font-normal leading-none tabular-nums text-muted-foreground group-hover/row:opacity-0">
                   {total}
                 </span>
               )}
             </button>
           )}
-          <Tip label={t('desktop.vault.renameFolder', { folder: folder.name })}>
-            <button
-              type="button"
-              className={ROW_ACTION}
-              aria-label={t('desktop.vault.renameFolder', { folder: folder.name })}
-              onClick={() => setRenaming(folder.path)}
-            >
-              <Pencil className="size-3.5" />
-            </button>
-          </Tip>
-          <Tip label={t('desktop.vault.trashFolder', { folder: folder.name })}>
-            <button
-              type="button"
-              className={ROW_ACTION}
-              aria-label={t('desktop.vault.trashFolder', { folder: folder.name })}
-              onClick={() => onTrashFolder(folder.path)}
-            >
-              <Trash2 className="size-3.5" />
-            </button>
-          </Tip>
-          <Tip label={t('desktop.vault.newFolderIn', { folder: folder.name })}>
-            <button
-              type="button"
-              className={ROW_ACTION}
-              aria-label={t('desktop.vault.newFolderIn', { folder: folder.name })}
-              onClick={() => onAddFolder(folder.path)}
-            >
-              <FolderPlus className="size-3.5" />
-            </button>
-          </Tip>
+          <div className="absolute right-1 top-0 flex h-7 items-center gap-0.5 rounded-md bg-card/90 pl-1 opacity-0 pointer-events-none backdrop-blur-xs group-hover/row:opacity-100 group-hover/row:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto">
+            <Tip label={t('desktop.vault.renameFolder', { folder: folder.name })}>
+              <button
+                type="button"
+                className="grid size-6 place-items-center rounded-sm text-muted-foreground hover:bg-muted hover:text-primary"
+                aria-label={t('desktop.vault.renameFolder', { folder: folder.name })}
+                onClick={() => setRenaming(folder.path)}
+              >
+                <Pencil className="size-3.5" />
+              </button>
+            </Tip>
+            <Tip label={t('desktop.vault.trashFolder', { folder: folder.name })}>
+              <button
+                type="button"
+                className="grid size-6 place-items-center rounded-sm text-muted-foreground hover:bg-muted hover:text-destructive"
+                aria-label={t('desktop.vault.trashFolder', { folder: folder.name })}
+                onClick={() => onTrashFolder(folder.path)}
+              >
+                <Trash2 className="size-3.5" />
+              </button>
+            </Tip>
+            <Tip label={t('desktop.vault.newFolderIn', { folder: folder.name })}>
+              <button
+                type="button"
+                className="grid size-6 place-items-center rounded-sm text-muted-foreground hover:bg-muted hover:text-primary"
+                aria-label={t('desktop.vault.newFolderIn', { folder: folder.name })}
+                onClick={() => onAddFolder(folder.path)}
+              >
+                <FolderPlus className="size-3.5" />
+              </button>
+            </Tip>
+          </div>
         </div>
         {!isCollapsed && renderChildren(folder, depth + 1)}
       </li>
@@ -200,7 +197,7 @@ export function NoteTree({
               type="button"
               draggable
               className={cn(
-                'group/note flex min-h-7 w-full min-w-0 cursor-grab items-center gap-2 rounded-md px-2 py-1 text-left transition-colors hover:bg-muted active:cursor-grabbing',
+                'group/note flex min-h-7 w-full min-w-0 cursor-grab items-center gap-1.5 rounded-md py-1 pl-1 pr-2 text-left transition-colors hover:bg-muted active:cursor-grabbing',
                 active && 'bg-primary/12 shadow-[inset_2px_0_0_var(--primary)] hover:bg-primary/12',
               )}
               title={rowTooltip(n)}
@@ -210,6 +207,7 @@ export function NoteTree({
                 e.dataTransfer.effectAllowed = 'move'
               }}
             >
+              <span className="size-3.5 flex-none" aria-hidden="true" />
               {/* A delivered meeting is an archive — editing copies it — so it
                   is marked before the click, not after. */}
               <Icon

@@ -602,28 +602,77 @@ fn walk_dirs(root: &Path, dir: &Path, out: &mut Vec<String>) -> Result<(), Strin
 
 #[tauri::command]
 pub fn trash_vault_file(state: State<'_, VaultState>, rel: String) -> Result<(), String> {
-    let from = abs(&state, &rel)?;
+    trash_file(&root(&state), &rel)
+}
+
+fn trash_file(root: &Path, rel: &str) -> Result<(), String> {
+    let from = resolve(root, rel)?;
     let name = from
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("note.md");
-    let trash_dir = root(&state).join(TRASH);
+    let trash_dir = root.join(TRASH);
     fs::create_dir_all(&trash_dir).map_err(|e| e.to_string())?;
     // Notes from different days share a basename; landing on one already in the
     // trash would destroy it, which is what the trash exists to prevent.
     let mut dest = trash_dir.join(name);
     if fs::symlink_metadata(&dest).is_ok() {
-        let stem = name.strip_suffix(".md").unwrap_or(name);
-        dest = unique_timestamped_path(&trash_dir, stem, ".md")?;
+        // Any file can be trashed now, not only notes: keep its own extension.
+        let (stem, ext) = match name.rsplit_once('.') {
+            Some((stem, ext)) if !stem.is_empty() => (stem, format!(".{ext}")),
+            _ => (name, String::new()),
+        };
+        dest = unique_timestamped_path(&trash_dir, stem, &ext)?;
     }
     fs::rename(&from, dest).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Save an export outside the vault, wherever the user points the native save
+/// dialog. The WebView never names the path — the dialog does — so this cannot
+/// be steered at an arbitrary file. Async because the dialog blocks, which must
+/// not happen on the main thread. `None` when the dialog was cancelled.
+#[tauri::command]
+pub async fn export_file(
+    app: tauri::AppHandle,
+    name: String,
+    bytes: Vec<u8>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let Some(picked) = app.dialog().file().set_file_name(&name).blocking_save_file() else {
+        return Ok(None);
+    };
+    let path = picked.into_path().map_err(|e| e.to_string())?;
+    fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    Ok(Some(path.to_string_lossy().into_owned()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::env;
+
+    #[test]
+    fn trash_file_keeps_the_extension_of_a_non_note_on_collision() {
+        let root = tmp("trash-file-ext");
+        fs::create_dir_all(root.join("a")).unwrap();
+        fs::create_dir_all(root.join("b")).unwrap();
+        fs::write(root.join("a/Board.excalidraw"), "one").unwrap();
+        fs::write(root.join("b/Board.excalidraw"), "two").unwrap();
+        trash_file(&root, "a/Board.excalidraw").unwrap();
+        trash_file(&root, "b/Board.excalidraw").unwrap();
+        let mut names: Vec<String> = fs::read_dir(root.join(TRASH))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(names.len(), 2);
+        assert_eq!(names[1], "Board.excalidraw");
+        assert!(names[0].starts_with("Board-"), "{names:?}");
+        assert!(names.iter().all(|n| n.ends_with(".excalidraw")), "{names:?}");
+        assert!(!root.join("a/Board.excalidraw").exists());
+        assert!(trash_file(&root, "../outside.md").is_err());
+    }
 
     fn tmp(name: &str) -> PathBuf {
         let dir = env::temp_dir().join(format!("companion-vault-test-{name}"));

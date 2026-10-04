@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath } from 'node:url';
 
 const p = (rel: string) => fileURLToPath(new URL(rel, import.meta.url));
@@ -26,10 +27,11 @@ function sanitizePdfobject() {
 
 // base '' -> relative asset URLs, required inside chrome-extension:// pages
 export default defineConfig({
-  plugins: [react(), sanitizePdfobject()],
+  plugins: [react(), tailwindcss(), sanitizePdfobject()],
   base: '',
   resolve: {
     alias: {
+      '@': p('./src'),
       canvg: p('./src/stubs/canvg.ts'),
       '@meetcc/shared/i18n': p('../../packages/shared/src/i18n'),
       '@meetcc/shared': p('../../packages/shared/src'),

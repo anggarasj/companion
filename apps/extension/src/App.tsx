@@ -15,7 +15,12 @@ import {
   type AnalysisRecord,
   type Meeting,
 } from '@meetcc/shared';
-import { Button, SegmentedControl, TextInput, ToastProvider, useToast } from '@meetcc/ui';
+import { ToastProvider, useToast } from '@meetcc/ui';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { Segmented } from './components/Segmented';
+import { FileText, MessageSquare, PanelRightClose, PanelRightOpen, Pencil, Video, Workflow } from 'lucide-react';
 import { Sidebar } from './components/Sidebar';
 import { Transcript } from './components/Transcript';
 import { SummaryView } from './components/SummaryView';
@@ -31,15 +36,19 @@ import { UpdateBanner } from './components/UpdateBanner';
 import { useGenerationScope } from './lib/generationScope';
 import { deliverMeetingsToDesktop } from './lib/desktopBulkExport';
 
-type Tab = 'summary' | 'diagram' | 'ask'
+type Tab = 'summary' | 'diagram' | 'ask';
 
 const TAB_LABELS: Record<Tab, Parameters<typeof t>[0]> = {
   summary: 'ext.tab.summary',
   diagram: 'ext.tab.diagram',
   ask: 'ext.tab.ask',
 };
+const TAB_ICONS = {
+  summary: FileText,
+  diagram: Workflow,
+  ask: MessageSquare,
+};
 const TABS = Object.keys(TAB_LABELS) as Tab[];
-
 /**
  * Meeting name in the toolbar. Auto-derived from the AI summary when the
  * analysis lands; click to rename. Clearing the field drops the override and
@@ -60,8 +69,8 @@ function MeetingTitle({ id, title }: { id: string; title: string }) {
       void saveTitle(id, draft);
     };
     return (
-      <TextInput
-        className="title-input"
+      <Input
+        className="title-input h-8 max-w-xs text-sm font-semibold"
         autoFocus
         value={draft}
         placeholder={displayMeetingId(id)}
@@ -81,8 +90,15 @@ function MeetingTitle({ id, title }: { id: string; title: string }) {
 
   return (
     <h1>
-      <Button className="title-btn" title={t('ext.meeting.rename', { id })} onClick={() => setEditing(true)}>
-        <span className="title-text">{title || displayMeetingId(id)}</span>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="title-btn h-8 px-2 font-bold text-base hover:bg-muted/80 group"
+        title={t('ext.meeting.rename', { id })}
+        onClick={() => setEditing(true)}
+      >
+        <span className="title-text truncate max-w-md">{title || displayMeetingId(id)}</span>
+        <Pencil className="size-3.5 text-muted-foreground opacity-40 group-hover:opacity-100 transition-opacity ml-1.5 shrink-0" />
       </Button>
     </h1>
   );
@@ -307,20 +323,27 @@ function Shell({ initialMeeting }: { initialMeeting: string | null }) {
         ) : selected ? (
           <>
             <header className="toolbar">
-              <div className="toolbar-title">
+              <div className="toolbar-title flex items-center gap-2">
                 <MeetingTitle id={selected.id} title={titles[selected.id] ?? ''} />
                 {isLive(selected, now) && (
-                  <span className="live-pill">
-                    <span className="live-dot" />
+                  <Badge
+                    variant="outline"
+                    className="live-pill gap-1.5 border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold px-2 py-0.5 text-xs uppercase"
+                  >
+                    <span className="live-dot size-1.5 rounded-full bg-emerald-500 animate-pulse" />
                     LIVE
-                  </span>
+                  </Badge>
                 )}
               </div>
               <nav className="tabs">
-                <SegmentedControl
+                <Segmented
                   ariaLabel={t('ext.meeting.views')}
                   role="tablist"
-                  options={TABS.map((id) => ({ value: id, label: t(TAB_LABELS[id]) }))}
+                  options={TABS.map((id) => ({
+                    value: id,
+                    label: t(TAB_LABELS[id]),
+                    icon: TAB_ICONS[id],
+                  }))}
                   value={tab}
                   onChange={(value) => setTab(value as typeof tab)}
                 />
@@ -368,13 +391,14 @@ function Shell({ initialMeeting }: { initialMeeting: string | null }) {
                         type="button"
                         className="transcript-collapse-btn"
                         variant="ghost"
+                        size="icon-xs"
                         aria-label={t('ext.transcript.collapse')}
                         title={t('ext.transcript.collapse')}
                         aria-expanded="true"
                         aria-controls="meeting-transcript-content"
                         onClick={() => setTranscriptOpen(false)}
                       >
-                        ‹
+                        <PanelRightClose className="size-4" />
                       </Button>
                     </div>
                     <div className="transcript-sidebar-content" id="meeting-transcript-content">
@@ -392,13 +416,14 @@ function Shell({ initialMeeting }: { initialMeeting: string | null }) {
                     type="button"
                     className="transcript-expand"
                     variant="ghost"
+                    size="icon-xs"
                     aria-label={t('ext.transcript.expand')}
                     title={t('ext.transcript.expand')}
                     aria-expanded="false"
                     aria-controls="meeting-transcript-content"
                     onClick={() => setTranscriptOpen(true)}
                   >
-                    ›
+                    <PanelRightOpen className="size-4" />
                   </Button>
                 )}
               </aside>
@@ -406,7 +431,9 @@ function Shell({ initialMeeting }: { initialMeeting: string | null }) {
           </>
         ) : (
           <div className="empty-state">
-            <div className="empty-glyph">CC</div>
+            <div className="empty-glyph">
+              <Video className="size-10 text-primary/70" />
+            </div>
             <p>{t('ext.empty.title')}</p>
             <p className="empty-hint">{t('ext.empty.hint')}</p>
           </div>

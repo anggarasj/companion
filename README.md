@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  A <b>browser extension</b> that captures <b>Google Meet</b> and <b>Microsoft Teams</b>
+  A <b>browser extension</b> that captures <b>Google Meet</b>, <b>Microsoft Teams</b> and <b>Zoom Web</b>
   captions from the DOM and turns them into AI meeting notes — executive summary,
   timeline, decisions, action items, risks, open questions — and a
   <b>desktop app</b> that keeps those notes in a local vault of plain Markdown files.
@@ -219,7 +219,7 @@ Indonesian meeting still produces Indonesian notes under an English interface.
 ## Permissions
 
 The extension does **not** ship with blanket host access. `host_permissions`
-covers only the meeting hosts it captures from (Meet, Teams). The AI provider,
+covers only the meeting hosts it captures from (Meet, Teams, Zoom Web). The AI provider,
 issue tracker, sync endpoint, speech-to-text endpoint and Google Calendar are
 `optional_host_permissions`, requested per origin when you save Settings —
 decline and only that integration stops working (roadmap §8.3).

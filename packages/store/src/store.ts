@@ -125,7 +125,7 @@ export class CompanionStore {
     source?: 'capture' | 'remote';
   }): void {
     const roomId = roomIdOf(input.id);
-    const platform = input.platform ?? (roomId.startsWith('tms-') ? 'teams' : 'google-meet');
+    const platform = input.platform ?? (roomId.startsWith('tms-') ? 'teams' : roomId.startsWith('zm-') ? 'zoom' : 'google-meet');
     this.db.run(
       `INSERT INTO meeting_rooms(id, platform, external_room_id) VALUES(?,?,?)
        ON CONFLICT(id) DO UPDATE SET platform=excluded.platform`,

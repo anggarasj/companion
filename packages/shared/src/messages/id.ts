@@ -23,6 +23,9 @@ export const id: Record<keyof typeof en, string> = {
   'desktop.vault.empty': 'Belum ada nota.',
   'desktop.vault.noMatches': 'Tidak ada nota yang cocok dengan pencarian ini.',
   'desktop.vault.bodyHit': 'cocok di dalam isi nota',
+  'desktop.vault.viewMode': 'Tampilan nota',
+  'desktop.vault.viewTree': 'Tampilan hierarki (folder)',
+  'desktop.vault.viewList': 'Tampilan daftar',
 
   // -- desktop: inbox -------------------------------------------------------
   'desktop.inbox.kicker': 'Rapat masuk',
@@ -40,6 +43,18 @@ export const id: Record<keyof typeof en, string> = {
   'desktop.editor.saving': 'menyimpan…',
   'desktop.editor.updated': 'diperbarui {date}',
   'desktop.editor.trash': 'Pindah ke sampah',
+  'desktop.editor.export': 'Ekspor…',
+  'desktop.export.title': 'Ekspor',
+  'desktop.export.format': 'Format ekspor',
+  'desktop.export.formatMarkdown': 'Markdown & CSV',
+  'desktop.export.formatHtml': 'HTML',
+  'desktop.export.formatPdf': 'PDF',
+  'desktop.export.includeProperties': 'Sertakan properti',
+  'desktop.export.includeTitle': 'Sertakan judul halaman',
+  'desktop.export.action': 'Ekspor',
+  'desktop.export.cancel': 'Batal',
+  'desktop.export.success': '{filename} berhasil diekspor',
+  'desktop.export.failed': 'Gagal mengekspor: {error}',
   'desktop.editor.save': 'Simpan',
   'desktop.editor.saveCopy': 'Simpan salinan',
   'desktop.editor.newNoteTitle': 'Nota baru',
@@ -176,7 +191,7 @@ export const id: Record<keyof typeof en, string> = {
   'ext.meeting.deleted': 'Meeting {label} dihapus.',
   'ext.empty.title': 'Belum ada meeting terekam.',
   'ext.empty.hint':
-    'Join Google Meet — caption nyala otomatis, transcript dan notulen AI muncul di sini.',
+    'Join Google Meet, Microsoft Teams, atau Zoom Web untuk merekam caption di sini. Nyalakan caption di Zoom terlebih dahulu.',
 
   // -- extension: sidebar ---------------------------------------------------
   'ext.sidebar.theme': 'Tema: {mode}',
@@ -987,6 +1002,8 @@ export const id: Record<keyof typeof en, string> = {
   'desktop.panes.vaults': 'Tampilkan atau sembunyikan daftar vault',
   'desktop.panes.files': 'Tampilkan atau sembunyikan tree file',
   'desktop.panes.ai': 'Tampilkan atau sembunyikan panel AI',
+  'desktop.board.new': 'Papan tulis baru',
+  'desktop.board.untitled': 'Papan tulis',
   'desktop.file.reveal': 'Tampilkan di Finder',
   'desktop.file.unsupported': 'File {ext} tidak bisa dibuka di Companion',
   'desktop.file.unsupportedHint': 'Companion membuka catatan Markdown, PDF, dan gambar. File ini tetap utuh di vault — buka dari Finder dengan aplikasi yang sesuai.',

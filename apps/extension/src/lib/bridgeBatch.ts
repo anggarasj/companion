@@ -28,7 +28,7 @@ export function toBridgeBatch(
     operationId: `${meeting.id}:${sent}-${meeting.entries.length}:${analysis ? `summary:${summaryVersion ?? ''}` : 'transcript'}`,
     roomId,
     // same rule the meeting store uses to label a room
-    platform: roomId.startsWith('tms-') ? 'teams' : 'google-meet',
+    platform: roomId.startsWith('tms-') ? 'teams' : roomId.startsWith('zm-') ? 'zoom' : 'google-meet',
     startedAt: startedAt(meeting) ?? '',
     participants: participants(meeting),
     entries: meeting.entries
@@ -61,7 +61,7 @@ export function toDocumentBridgeBatch(
     operationId: `${meeting.id}:document:${docType}:${generatedAt}`,
     sessionKey: `${roomId}#${start}`,
     roomId,
-    platform: meetingRoomId.startsWith('tms-') ? 'teams' : 'google-meet',
+    platform: meetingRoomId.startsWith('tms-') ? 'teams' : meetingRoomId.startsWith('zm-') ? 'zoom' : 'google-meet',
     startedAt: start,
     participants: participants(meeting),
     entries: [],

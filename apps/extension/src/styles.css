@@ -1,45 +1,114 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:where(body:not([data-theme='light']) *));
+
 /* ── phosphor console ─────────────────────────────────────────────
    graphite ink, phosphor-green signal, mono timestamps.
    fonts are native (Avenir Next on macOS) — extensions must not
    fetch remote fonts. */
-
 :root {
   color-scheme: dark;
-  --ink: var(--ui-ink);
-  --panel: var(--ui-panel);
-  --panel-2: var(--ui-panel-2);
-  --hairline: var(--ui-hairline);
-  --hairline-2: var(--ui-hairline-2);
-  --text: var(--ui-text);
-  --text-dim: var(--ui-text-dim);
-  --text-faint: var(--ui-text-faint);
-  --phosphor: var(--ui-accent);
-  --phosphor-dim: var(--ui-accent-dim);
-  --amber: var(--ui-warning);
-  --danger: var(--ui-danger);
-  --danger-dim: var(--ui-danger-dim);
-  --font-body: var(--ui-font-body);
-  --font-mono: var(--ui-font-mono);
-  --r: var(--ui-radius);
+  --background: #0a0d12;
+  --foreground: #dbe2ee;
+  --card: #0f131b;
+  --popover: #0f131b;
+  --muted: #131926;
+  --muted-foreground: #8b95a9;
+  --faint: #5c6579;
+  --sunken: #0d1119;
+  --primary: #46e394;
+  --primary-foreground: #0a0d12;
+  --destructive: #ff6b74;
+  --warning: #eec26a;
+  --info: #6aa9f0;
+  --border: #1d2434;
+  --input: #273043;
+  --ring: #46e394;
+
+  --ink: var(--ui-ink, var(--background));
+  --panel: var(--ui-panel, var(--card));
+  --panel-2: var(--ui-panel-2, var(--muted));
+  --hairline: var(--ui-hairline, var(--border));
+  --hairline-2: var(--ui-hairline-2, var(--input));
+  --text: var(--ui-text, var(--foreground));
+  --text-dim: var(--ui-text-dim, var(--muted-foreground));
+  --text-faint: var(--ui-text-faint, var(--faint));
+  --phosphor: var(--ui-accent, var(--primary));
+  --phosphor-dim: var(--ui-accent-dim, rgba(70, 227, 148, 0.14));
+  --amber: var(--ui-warning, var(--warning));
+  --danger: var(--ui-danger, var(--destructive));
+  --danger-dim: var(--ui-danger-dim, rgba(255, 107, 116, 0.12));
+  --font-body: 'Avenir Next', Avenir, Futura, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+  --r: 8px;
 }
 
 /* light theme: same phosphor-console structure on paper — accents darkened
    for contrast on white, hairlines cooled, signal green kept as the brand */
 body[data-theme='light'] {
   color-scheme: light;
-  --ink: var(--ui-ink);
-  --panel: var(--ui-panel);
-  --panel-2: var(--ui-panel-2);
-  --hairline: var(--ui-hairline);
-  --hairline-2: var(--ui-hairline-2);
-  --text: var(--ui-text);
-  --text-dim: var(--ui-text-dim);
-  --text-faint: var(--ui-text-faint);
-  --phosphor: var(--ui-accent);
-  --phosphor-dim: var(--ui-accent-dim);
-  --amber: var(--ui-warning);
-  --danger: var(--ui-danger);
-  --danger-dim: var(--ui-danger-dim);
+  --background: #ffffff;
+  --foreground: #1c2433;
+  --card: #ffffff;
+  --popover: #ffffff;
+  --muted: #f1f4f9;
+  --muted-foreground: #55617a;
+  --faint: #8a93a8;
+  --sunken: #f7f9fc;
+  --primary: #0c8f60;
+  --primary-foreground: #ffffff;
+  --destructive: #d43f49;
+  --warning: #a86f0c;
+  --info: #1663b0;
+  --border: #d2dae7;
+  --input: #d2dae7;
+  --ring: #0c8f60;
+
+  --ink: var(--ui-ink, var(--background));
+  --panel: var(--ui-panel, var(--card));
+  --panel-2: var(--ui-panel-2, var(--muted));
+  --hairline: var(--ui-hairline, var(--border));
+  --hairline-2: var(--ui-hairline-2, var(--input));
+  --text: var(--ui-text, var(--foreground));
+  --text-dim: var(--ui-text-dim, var(--muted-foreground));
+  --text-faint: var(--ui-text-faint, var(--faint));
+  --phosphor: var(--ui-accent, var(--primary));
+  --phosphor-dim: var(--ui-accent-dim, rgba(12, 143, 96, 0.12));
+  --amber: var(--ui-warning, var(--warning));
+  --danger: var(--ui-danger, var(--destructive));
+  --danger-dim: var(--ui-danger-dim, rgba(212, 63, 73, 0.1));
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--muted);
+  --color-accent-foreground: var(--foreground);
+  --color-faint: var(--faint);
+  --color-sunken: var(--sunken);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--muted);
+  --color-secondary-foreground: var(--foreground);
+  --color-destructive: var(--destructive);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --font-sans: 'Avenir Next', Avenir, Futura, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
 }
 
 * { box-sizing: border-box; }

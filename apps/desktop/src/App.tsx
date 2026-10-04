@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { invoke } from '@tauri-apps/api/core'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { openDatabase, type SqlDriver } from '@meetcc/store'
@@ -26,7 +27,9 @@ import { AISidebar } from './AISidebar'
 import { VaultList } from './VaultList'
 import { PageHeader } from './PageHeader'
 import { FileView, isPdf } from './FileView'
+import { EMPTY_BOARD, isBoard, newBoardPath } from './board'
 import { PageMenu } from './PageMenu'
+import { ExportModal } from './ExportModal'
 import { loadPanes, savePanes, type Panes } from './panes'
 import { loadVaults, saveVaults, withCurrent, type VaultEntry } from './vaults'
 import type { Editor } from '@tiptap/core'
@@ -37,14 +40,17 @@ import {
   FilePlus,
   FolderOpen,
   FolderPlus,
+  FolderTree,
   HardDrive,
   Heart,
   Library,
+  List,
   Monitor,
   Moon,
   PanelLeft,
   PanelRight,
   Save,
+  Shapes,
   Search,
   Settings,
   Sparkles,
@@ -74,6 +80,8 @@ import {
   type SettingsPreferences,
 } from './settingsEvents'
 
+// Excalidraw is ~2 MB; load it the first time a board opens, not at startup.
+const Whiteboard = lazy(() => import('./Whiteboard').then((m) => ({ default: m.Whiteboard })))
 
 /** The Companion mark from assets/brand/logo-mark.svg, inlined. */
 function BrandMark() {
@@ -306,6 +314,14 @@ export default function App() {
   const [query, setQuery] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [view, setView] = useState<'notes' | 'inbox'>('notes')
+  const [notesView, setNotesView] = useState<'tree' | 'list'>(() => {
+    try {
+      return (localStorage.getItem('companion:notes-view') as 'tree' | 'list') || 'tree'
+    } catch {
+      return 'tree'
+    }
+  })
+  const [exportOpen, setExportOpen] = useState(false)
   const [dirty, setDirty] = useState(false)
   const [autosave, setAutosave] = useState(loadAutosave)
   // Bumped only when a different note is opened, so the editor remounts then
@@ -683,6 +699,21 @@ export default function App() {
     setError(null)
   }
 
+  /** A blank whiteboard file, created beside whatever is open, then opened. */
+  async function openNewBoard() {
+    if (!vault) return
+    const near = selected ?? viewing
+    const folder = near ? near.split('/').slice(0, -1).join('/') : ''
+    const rel = newBoardPath(folder, t('desktop.board.untitled'), new Date(), otherFiles)
+    try {
+      await invoke('write_vault_file', { rel, content: EMPTY_BOARD })
+      await refresh(vault)
+      await open(rel)
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
   /**
    * A document written in one step (by AI) becomes a real file straight away,
    * named after its title, never on top of an existing one — then opens. It
@@ -770,7 +801,26 @@ export default function App() {
   }, [autosave, dirty, note, pending])
 
   function trash() {
-    if (!vault || !note || pending) return
+    if (!vault || pending) return
+    // A PDF, image or board: no draft and no unsaved state, just the file.
+    if (!note) {
+      const rel = viewing
+      if (!rel) return
+      setConfirm({
+        message: t('desktop.vault.confirmTrash'),
+        label: t('desktop.editor.trash'),
+        run: async () => {
+          // Unmount first: a board flushes its last stroke on unmount, and
+          // that write must land before the move, not recreate the file after.
+          flushSync(() => setViewing(null))
+          await vault.trash(rel)
+          await refresh(vault)
+          toast('info', t('desktop.toast.trashed'))
+          setError(null)
+        },
+      })
+      return
+    }
     // A note that was never saved has no file. An untouched draft drops
     // silently; one with typed content asks first — there is no file to come
     // back from, so a single misfire would erase real work.
@@ -1045,10 +1095,12 @@ export default function App() {
 
   const paletteCommands: PaletteCommand[] = [
     { id: 'new', label: t('desktop.vault.newNote'), run: () => guard(openNew) },
+    { id: 'board', label: t('desktop.board.new'), run: () => guard(openNewBoard) },
     { id: 'ai', label: t('desktop.ai.writeWithAI'), hint: '✦', run: () => setComposer({}) },
     ...(note && isIncomingMeeting(note)
       ? [{ id: 'meeting-doc', label: t('desktop.composer.fromMeeting'), hint: '✦', run: () => setComposer({ kind: 'prd' as const }) }]
       : []),
+    ...(note ? [{ id: 'export', label: t('desktop.editor.export'), run: () => setExportOpen(true) }] : []),
     {
       id: 'folder',
       label: t('desktop.vault.newFolder'),
@@ -1145,49 +1197,119 @@ export default function App() {
           <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-2.5 py-3">
             {view === 'notes' && (
               <>
-                <div className="flex flex-none items-center gap-2 border-b px-1 pb-2">
+                <div className="flex flex-none items-center gap-1.5 border-b px-1 pb-2">
                   <span className={KICKER}>{t('desktop.vault.kicker')}</span>
                   <span className={COUNT}>{t('desktop.vault.count', { count: notesTab.length })}</span>
-                  {/* A disabled control gets no hover events, so the tip sits on a wrapper. */}
-                  <Tip label={t('desktop.ai.writeWithAI')}>
-                    <span className="inline-flex">
-                      <button
-                        type="button"
-                        className={cn(HEAD_BTN, 'text-primary')}
-                        onClick={() => setComposer({})}
-                        aria-label={t('desktop.ai.writeWithAI')}
-                        disabled={!vault}
-                      >
-                        <Sparkles className="size-4" />
-                      </button>
-                    </span>
-                  </Tip>
-                  <Tip label={t('desktop.vault.newFolder')}>
-                    <span className="inline-flex">
-                      <button
-                        type="button"
-                        className={HEAD_BTN}
-                        onClick={() => setNamingFolder('')}
-                        aria-label={t('desktop.vault.newFolder')}
-                        disabled={!vault}
-                      >
-                        <FolderPlus className="size-4" />
-                      </button>
-                    </span>
-                  </Tip>
-                  <Tip label={vault ? t('desktop.vault.newNote') : t('desktop.vault.preparing')}>
-                    <span className="inline-flex">
-                      <button
-                        type="button"
-                        className={HEAD_BTN}
-                        onClick={() => guard(openNew)}
-                        aria-label={t('desktop.vault.newNote')}
-                        disabled={!vault}
-                      >
-                        <FilePlus className="size-4" />
-                      </button>
-                    </span>
-                  </Tip>
+                  <div className="ml-auto flex items-center gap-1">
+                    <div
+                      className="flex items-center rounded-md border bg-muted/60 p-0.5 text-muted-foreground"
+                      role="radiogroup"
+                      aria-label={t('desktop.vault.viewMode')}
+                    >
+                      <Tip label={t('desktop.vault.viewTree')}>
+                        <button
+                          type="button"
+                          role="radio"
+                          aria-checked={notesView === 'tree'}
+                          className={cn(
+                            'grid size-5 place-items-center rounded-sm transition-colors',
+                            notesView === 'tree'
+                              ? 'bg-background text-foreground shadow-xs'
+                              : 'hover:text-foreground',
+                          )}
+                          onClick={() => {
+                            setNotesView('tree')
+                            try {
+                              localStorage.setItem('companion:notes-view', 'tree')
+                            } catch {
+                              /* the view choice still holds for this session */
+                            }
+                          }}
+                          aria-label={t('desktop.vault.viewTree')}
+                        >
+                          <FolderTree className="size-3.5" />
+                        </button>
+                      </Tip>
+                      <Tip label={t('desktop.vault.viewList')}>
+                        <button
+                          type="button"
+                          role="radio"
+                          aria-checked={notesView === 'list'}
+                          className={cn(
+                            'grid size-5 place-items-center rounded-sm transition-colors',
+                            notesView === 'list'
+                              ? 'bg-background text-foreground shadow-xs'
+                              : 'hover:text-foreground',
+                          )}
+                          onClick={() => {
+                            setNotesView('list')
+                            try {
+                              localStorage.setItem('companion:notes-view', 'list')
+                            } catch {
+                              /* the view choice still holds for this session */
+                            }
+                          }}
+                          aria-label={t('desktop.vault.viewList')}
+                        >
+                          <List className="size-3.5" />
+                        </button>
+                      </Tip>
+                    </div>
+                    <Tip label={t('desktop.ai.writeWithAI')}>
+                      <span className="inline-flex">
+                        <button
+                          type="button"
+                          className={cn(HEAD_BTN, 'text-primary')}
+                          onClick={() => setComposer({})}
+                          aria-label={t('desktop.ai.writeWithAI')}
+                          disabled={!vault}
+                        >
+                          <Sparkles className="size-4" />
+                        </button>
+                      </span>
+                    </Tip>
+                    {notesView === 'tree' && (
+                      <Tip label={t('desktop.vault.newFolder')}>
+                        <span className="inline-flex">
+                          <button
+                            type="button"
+                            className={HEAD_BTN}
+                            onClick={() => setNamingFolder('')}
+                            aria-label={t('desktop.vault.newFolder')}
+                            disabled={!vault}
+                          >
+                            <FolderPlus className="size-4" />
+                          </button>
+                        </span>
+                      </Tip>
+                    )}
+                    <Tip label={vault ? t('desktop.board.new') : t('desktop.vault.preparing')}>
+                      <span className="inline-flex">
+                        <button
+                          type="button"
+                          className={HEAD_BTN}
+                          onClick={() => guard(openNewBoard)}
+                          aria-label={t('desktop.board.new')}
+                          disabled={!vault}
+                        >
+                          <Shapes className="size-4" />
+                        </button>
+                      </span>
+                    </Tip>
+                    <Tip label={vault ? t('desktop.vault.newNote') : t('desktop.vault.preparing')}>
+                      <span className="inline-flex">
+                        <button
+                          type="button"
+                          className={HEAD_BTN}
+                          onClick={() => guard(openNew)}
+                          aria-label={t('desktop.vault.newNote')}
+                          disabled={!vault}
+                        >
+                          <FilePlus className="size-4" />
+                        </button>
+                      </span>
+                    </Tip>
+                  </div>
                 </div>
                 {namingFolder !== null && (
                   <Input
@@ -1207,7 +1329,7 @@ export default function App() {
                   />
                 )}
                 {!query.trim() ? (
-                  <>
+                  notesView === 'tree' ? (
                     <NoteTree
                       root={tree}
                       selected={viewing ?? selected}
@@ -1217,7 +1339,37 @@ export default function App() {
                       onRenameFolder={(folder, name) => guard(() => renameFolder(folder, name))}
                       onTrashFolder={requestTrashFolder}
                     />
-                  </>
+                  ) : (
+                    <ul className={LIST}>
+                      {notesTab.map((n) => (
+                        <li key={n.rel || n.title}>
+                          <button
+                            type="button"
+                            className={noteItem((viewing ?? selected) === n.rel)}
+                            onClick={() => guard(() => open(n.rel))}
+                          >
+                            <span className={NOTE_TITLE}>{n.title}</span>
+                            <span className="flex min-w-0 max-w-full items-center gap-1.5 overflow-hidden">
+                              {n.platform && n.platform !== 'manual' && (
+                                <span
+                                  className={cn(
+                                    'max-w-1/2 truncate rounded-sm border px-[5px] py-px text-[10px] font-medium leading-snug tracking-wide text-muted-foreground',
+                                    (viewing ?? selected) === n.rel && 'border-primary text-primary',
+                                  )}
+                                >
+                                  {platformLabel(n.platform)}
+                                </span>
+                              )}
+                              <span className="ml-auto min-w-0 flex-1 truncate text-right text-[11px] leading-snug text-muted-foreground">
+                                {dayOf(n.updatedAt)}
+                              </span>
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                      {notesTab.length === 0 && <li className={EMPTY_HINT}>{t('desktop.vault.empty')}</li>}
+                    </ul>
+                  )
                 ) : (
                   <ul className={LIST}>
                     {notesTabResults.map((n) => (
@@ -1413,7 +1565,8 @@ export default function App() {
                       },
                     ]
                   : []),
-                ...(note ? [{ id: 'trash', label: t('desktop.editor.trash'), danger: true, run: trash }] : []),
+                ...(note ? [{ id: 'export', label: t('desktop.editor.export'), run: () => setExportOpen(true) }] : []),
+                ...(note || viewing ? [{ id: 'trash', label: t('desktop.editor.trash'), danger: true, run: trash }] : []),
               ]}
             />
           )}
@@ -1442,7 +1595,13 @@ export default function App() {
           )}
         >
           {viewing ? (
-            <FileView rel={viewing} onError={setError} />
+            isBoard(viewing) ? (
+              <Suspense fallback={null}>
+                <Whiteboard key={viewing} rel={viewing} onError={setError} />
+              </Suspense>
+            ) : (
+              <FileView rel={viewing} onError={setError} />
+            )
           ) : note ? (
             <>
               <PageHeader
@@ -1522,36 +1681,42 @@ export default function App() {
               <p className="mt-1.5 text-xs text-muted-foreground">{t('desktop.palette.hint')}</p>
             </div>
           )}
-          {confirm && (
-            <div className={cn(BAR, 'border-warning bg-warning/10 text-foreground')} role="alert">
-              <TriangleAlert className="size-4 flex-none text-warning" aria-hidden="true" />
-              <span className="flex-1">{confirm.message}</span>
-              <Button type="button" variant="outline" size="sm" onClick={() => setConfirm(null)}>
-                {t('desktop.settings.cancel')}
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => {
-                  const action = confirm.run
-                  setConfirm(null)
-                  void action().catch((e) => setError(String(e)))
-                }}
-              >
-                {confirm.label}
-              </Button>
-            </div>
-          )}
-          {pending && (
-            <div className={cn(BAR, 'border-warning bg-warning/10 text-foreground')} role="alert">
-              <TriangleAlert className="size-4 flex-none text-warning" aria-hidden="true" />
-              <span className="flex-1">{t('desktop.editor.confirmUnsaved')}</span>
-              <Button type="button" variant="outline" size="sm" onClick={() => void resume(true)}>
-                {t('desktop.editor.discard')}
-              </Button>
-              <Button type="button" size="sm" onClick={() => void resume(false)}>
-                {t('desktop.editor.saveAndGo')}
-              </Button>
+          {/* Pinned to the bottom of the pane: at the end of a long note they
+              would render below the fold, and the button would seem dead. */}
+          {(confirm || pending) && (
+            <div className={cn('sticky bottom-0 z-10 bg-background pb-3', viewing && 'px-3')}>
+              {confirm && (
+                <div className={cn(BAR, 'border-warning bg-warning/10 text-foreground')} role="alert">
+                  <TriangleAlert className="size-4 flex-none text-warning" aria-hidden="true" />
+                  <span className="flex-1">{confirm.message}</span>
+                  <Button type="button" variant="outline" size="sm" onClick={() => setConfirm(null)}>
+                    {t('desktop.settings.cancel')}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => {
+                      const action = confirm.run
+                      setConfirm(null)
+                      void action().catch((e) => setError(String(e)))
+                    }}
+                  >
+                    {confirm.label}
+                  </Button>
+                </div>
+              )}
+              {pending && (
+                <div className={cn(BAR, 'border-warning bg-warning/10 text-foreground')} role="alert">
+                  <TriangleAlert className="size-4 flex-none text-warning" aria-hidden="true" />
+                  <span className="flex-1">{t('desktop.editor.confirmUnsaved')}</span>
+                  <Button type="button" variant="outline" size="sm" onClick={() => void resume(true)}>
+                    {t('desktop.editor.discard')}
+                  </Button>
+                  <Button type="button" size="sm" onClick={() => void resume(false)}>
+                    {t('desktop.editor.saveAndGo')}
+                  </Button>
+                </div>
+              )}
             </div>
           )}
           {error && (
@@ -1591,6 +1756,12 @@ export default function App() {
           onClose={() => setPalette(false)}
         />
       )}
+      <ExportModal
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        note={note}
+        editor={liveEditor}
+      />
     </div>
   )
 }

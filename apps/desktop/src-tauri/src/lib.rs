@@ -123,6 +123,7 @@ pub fn run() {
             vault::append_vault_line,
             vault::vault_mtime,
             vault::trash_vault_file,
+            vault::export_file,
             settings::load_ai_settings,
             settings::save_ai_settings,
             settings::load_secret,

@@ -41,7 +41,7 @@ make smoke-sync     # the built sync bin answers over HTTP
 `make help` lists every target.
 
 Load: `chrome://extensions` → Developer mode → **Load unpacked** → **`apps/extension/dist/`**.
-After every build: reload the extension, then refresh the Meet tab.
+After every build: reload the extension, then refresh the meeting tab.
 
 The manifest carries a `key`, so the extension id is the same wherever it is
 loaded from:

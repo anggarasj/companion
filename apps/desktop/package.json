@@ -12,6 +12,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@excalidraw/excalidraw": "^0.18.1",
     "@meetcc/ai": "*",
     "@meetcc/meeting": "*",
     "@meetcc/shared": "*",
@@ -38,6 +39,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cn": "^0.4.0",
+    "jspdf": "^4.2.1",
     "lucide-react": "^1.52.0",
     "mermaid": "^11.17.2",
     "radix-ui": "^1.6.7",

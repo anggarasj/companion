@@ -16,7 +16,9 @@ import {
 } from '@meetcc/ai';
 import { DEFAULT_OAUTH, type OAuthSettings, type Settings } from '@meetcc/shared';
 
-import { Button, TextInput, useToast } from '@meetcc/ui';
+import { useToast } from '@meetcc/ui';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 /** A device code stops being approvable after 15 minutes. */
 const DEVICE_TTL_MS = 15 * 60_000;
 
@@ -201,16 +203,18 @@ export function SignInPanel({
           <p className="hint">
             {t('ext.signin.googleHint', { address: '127.0.0.1' })}
           </p>
-          <TextInput type="url"
+          <Input type="url"
+            className="h-8 text-xs"
             value={pasted}
             placeholder="http://127.0.0.1:45789/?code=…"
             autoComplete="off"
             onChange={(e) => setPasted(e.target.value)}
           />
-          <Button variant="primary" onClick={() => void finishGoogle()} disabled={!!busy || !pasted}>
+          <Button variant="default" onClick={() => void finishGoogle()} disabled={!!busy || !pasted}>
             {busy || t('ext.signin.finish')}
           </Button>
-          <TextInput type="text"
+          <Input type="text"
+            className="h-8 text-xs"
             value={projectId}
             placeholder="Project ID Google Cloud (opsional)"
             autoComplete="off"
