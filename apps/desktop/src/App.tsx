@@ -1761,6 +1761,8 @@ export default function App() {
         onClose={() => setExportOpen(false)}
         note={note}
         editor={liveEditor}
+        folder={selected ? selected.split('/').slice(0, -1).join('/') : (target ?? '')}
+        onExported={() => vault && void refresh(vault)}
       />
     </div>
   )

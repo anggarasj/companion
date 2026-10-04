@@ -100,7 +100,7 @@ function MeetingTitle({ id, title }: { id: string; title: string }) {
         title={t('ext.meeting.rename', { id })}
         onClick={() => setEditing(true)}
       >
-        <span className="title-text truncate max-w-md">{title || displayMeetingId(id)}</span>
+        <span className="title-text truncate max-w-[200px] sm:max-w-xs md:max-w-md">{title || displayMeetingId(id)}</span>
         <Pencil className="size-3.5 text-muted-foreground opacity-40 group-hover:opacity-100 transition-opacity ml-1.5 shrink-0" />
       </Button>
     </h1>
@@ -365,19 +365,19 @@ function Shell({ initialMeeting }: { initialMeeting: string | null }) {
         ) : selected ? (
           <>
             <header className="toolbar">
-              <div className="toolbar-title flex items-center gap-2">
+              <div className="toolbar-title flex items-center gap-2 min-w-0 flex-1">
                 <MeetingTitle id={selected.id} title={titles[selected.id] ?? ''} />
                 {isLive(selected, now) && (
                   <Badge
                     variant="outline"
-                    className="live-pill gap-1.5 border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold px-2 py-0.5 text-xs uppercase"
+                    className="live-pill gap-1.5 border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold px-2 py-0.5 text-xs uppercase shrink-0"
                   >
                     <span className="live-dot size-1.5 rounded-full bg-emerald-500 animate-pulse" />
                     LIVE
                   </Badge>
                 )}
               </div>
-              <nav className="tabs">
+              <nav className="tabs shrink-0">
                 <Segmented
                   ariaLabel={t('ext.meeting.views')}
                   role="tablist"

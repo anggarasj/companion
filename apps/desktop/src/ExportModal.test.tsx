@@ -16,15 +16,17 @@ const sampleNote: VaultNote = {
   platform: 'manual',
 }
 
+const onExported = vi.fn()
+
 describe('ExportModal', () => {
   it('renders nothing when closed or note is null', () => {
     const { container: c1 } = render(
-      <ExportModal open={false} onClose={vi.fn()} note={sampleNote} editor={null} />,
+      <ExportModal open={false} onClose={vi.fn()} note={sampleNote} editor={null} folder="Projects" onExported={onExported} />,
     )
     expect(c1.innerHTML).toBe('')
 
     const { container: c2 } = render(
-      <ExportModal open={true} onClose={vi.fn()} note={null} editor={null} />,
+      <ExportModal open={true} onClose={vi.fn()} note={null} editor={null} folder="Projects" onExported={onExported} />,
     )
     expect(c2.innerHTML).toBe('')
   })
@@ -34,7 +36,7 @@ describe('ExportModal', () => {
     const onClose = vi.fn()
     const exportSpy = vi.spyOn(exportModule, 'exportNote').mockResolvedValue('/Users/a/Desktop/Interview.md')
 
-    render(<ExportModal open={true} onClose={onClose} note={sampleNote} editor={null} />)
+    render(<ExportModal open={true} onClose={onClose} note={sampleNote} editor={null} folder="Projects" onExported={onExported} />)
 
     expect(screen.getByRole('heading', { name: t('desktop.export.title') })).toBeTruthy()
     expect(screen.getByText(t('desktop.export.format'))).toBeTruthy()
@@ -52,26 +54,30 @@ describe('ExportModal', () => {
         includeMetadata: true,
         includeTitle: true,
       }),
+      'Projects',
     )
+    expect(onExported).toHaveBeenCalled()
     expect(onClose).toHaveBeenCalled()
   })
 
   it('stays open when the save dialog is cancelled', async () => {
+    onExported.mockClear()
     const user = userEvent.setup()
     const onClose = vi.fn()
     vi.spyOn(exportModule, 'exportNote').mockResolvedValue(null)
 
-    render(<ExportModal open={true} onClose={onClose} note={sampleNote} editor={null} />)
+    render(<ExportModal open={true} onClose={onClose} note={sampleNote} editor={null} folder="Projects" onExported={onExported} />)
     await user.click(screen.getByRole('button', { name: t('desktop.export.action') }))
 
     expect(onClose).not.toHaveBeenCalled()
+    expect(onExported).not.toHaveBeenCalled()
   })
 
   it('allows cancelling the modal', async () => {
     const user = userEvent.setup()
     const onClose = vi.fn()
 
-    render(<ExportModal open={true} onClose={onClose} note={sampleNote} editor={null} />)
+    render(<ExportModal open={true} onClose={onClose} note={sampleNote} editor={null} folder="Projects" onExported={onExported} />)
 
     const cancelBtn = screen.getByRole('button', { name: t('desktop.export.cancel') })
     await user.click(cancelBtn)

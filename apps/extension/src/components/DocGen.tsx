@@ -407,7 +407,7 @@ export function DocumentOutputs({
           />
         </details>
       )}
-      <div className="doc-output-actions">
+      <div className="doc-output-actions flex flex-wrap items-center justify-between gap-2 px-4 py-2">
         <div className="doc-export-control" ref={exportMenuRef}>
           <Button
             type="button"
@@ -547,24 +547,26 @@ export function DocumentOutputs({
             </div>
           )}
         </div>
-        <div className="doc-primary-actions">
+        <div className="doc-primary-actions flex items-center justify-end gap-2 flex-wrap min-w-0">
           {analysis && (
             <Button
               type="button"
               variant="outline"
               size="sm"
+              className="truncate max-w-full"
               title={t('ext.summary.reanalyzeHint')}
               onClick={() => void regenerateSummary()}
               disabled={summaryBusy}
             >
-              <RefreshCw className={`size-3.5 mr-1.5 ${summaryBusy ? 'animate-spin' : ''}`} />
-              {summaryBusy ? t('ext.summary.processing') : t('ext.summary.regenerate')}
+              <RefreshCw className={`size-3.5 mr-1.5 shrink-0 ${summaryBusy ? 'animate-spin' : ''}`} />
+              <span className="truncate">{summaryBusy ? t('ext.summary.processing') : t('ext.summary.regenerate')}</span>
             </Button>
           )}
           <Button
             variant="default"
             size="sm"
             type="button"
+            className="truncate max-w-full"
             onClick={() => void generate(type)}
             title={t('ext.docs.generateDocumentHint', { label: meta.label })}
             disabled={
@@ -574,10 +576,12 @@ export function DocumentOutputs({
               includedEntryCount === 0
             }
           >
-            <Sparkles className="size-3.5 mr-1.5" />
-            {running
-              ? t('ext.docs.generatingPercent', { label: meta.label, pct })
-              : t('ext.docs.generateDocument', { label: meta.label })}
+            <Sparkles className="size-3.5 mr-1.5 shrink-0" />
+            <span className="truncate">
+              {running
+                ? t('ext.docs.generatingPercent', { label: meta.label, pct })
+                : t('ext.docs.generateDocument', { label: meta.label })}
+            </span>
           </Button>
         </div>
       </div>

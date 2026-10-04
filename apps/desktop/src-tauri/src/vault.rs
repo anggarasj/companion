@@ -628,18 +628,28 @@ fn trash_file(root: &Path, rel: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Save an export outside the vault, wherever the user points the native save
-/// dialog. The WebView never names the path — the dialog does — so this cannot
-/// be steered at an arbitrary file. Async because the dialog blocks, which must
-/// not happen on the main thread. `None` when the dialog was cancelled.
+/// Save an export wherever the user points the native save dialog, which opens
+/// in `dir` — the vault folder the note lives in. The WebView never names the
+/// target — the dialog does — so this cannot be steered at an arbitrary file.
+/// Async because the dialog blocks, which must not happen on the main thread.
+/// `None` when the dialog was cancelled.
 #[tauri::command]
 pub async fn export_file(
     app: tauri::AppHandle,
+    state: State<'_, VaultState>,
     name: String,
+    dir: String,
     bytes: Vec<u8>,
 ) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
-    let Some(picked) = app.dialog().file().set_file_name(&name).blocking_save_file() else {
+    let start = abs(&state, &dir)?;
+    let Some(picked) = app
+        .dialog()
+        .file()
+        .set_directory(start)
+        .set_file_name(&name)
+        .blocking_save_file()
+    else {
         return Ok(None);
     };
     let path = picked.into_path().map_err(|e| e.to_string())?;

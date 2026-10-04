@@ -13,11 +13,17 @@ export function ExportModal({
   onClose,
   note,
   editor,
+  folder,
+  onExported,
 }: {
   open: boolean
   onClose: () => void
   note: VaultNote | null
   editor: Editor | null
+  /** Vault-relative folder of the note; the save dialog opens there. */
+  folder: string
+  /** After a file was written — it may have landed in the vault. */
+  onExported: () => void
 }) {
   const [format, setFormat] = useState<ExportFormat>('markdown')
   const [includeMetadata, setIncludeMetadata] = useState(true)
@@ -37,13 +43,19 @@ export function ExportModal({
     setExporting(true)
     try {
       const bodyHtml = editor ? editor.getHTML() : `<p>${note.body.replace(/\n\n/g, '</p><p>')}</p>`
-      const saved = await exportNote(note, bodyHtml, {
-        format,
-        includeMetadata,
-        includeTitle,
-      })
+      const saved = await exportNote(
+        note,
+        bodyHtml,
+        {
+          format,
+          includeMetadata,
+          includeTitle,
+        },
+        folder,
+      )
       if (saved === null) return // dialog cancelled: stay open, choice intact
       toast('success', t('desktop.export.success', { filename: saved.split(/[\\/]/).pop() ?? saved }))
+      onExported()
       onClose()
     } catch (e) {
       toast('error', t('desktop.export.failed', { error: (e as Error).message }))

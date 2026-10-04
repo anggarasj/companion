@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf'
 import { invoke } from '@tauri-apps/api/core'
+import { renderMermaid } from './editor/mermaid'
 import type { VaultNote } from '@meetcc/vault'
 
 export type ExportFormat = 'markdown' | 'html' | 'pdf'
@@ -25,10 +26,62 @@ export function sanitizeFilename(title: string, ext: string): string {
  * Tauri WebView, so the bytes go to Rust, which asks where and writes them.
  * Resolves to the saved path, or null when the dialog was cancelled.
  */
-export async function saveExport(filename: string, blob: Blob): Promise<string | null> {
+export async function saveExport(filename: string, dir: string, blob: Blob): Promise<string | null> {
   // ponytail: bytes travel as a JSON number array — fine for notes; switch to a raw IPC body if exports reach many MB.
   const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()))
-  return invoke<string | null>('export_file', { name: filename, bytes })
+  return invoke<string | null>('export_file', { name: filename, dir, bytes })
+}
+
+/** Text for HTML: titles and properties are user data, not markup. */
+const esc = (v: string): string =>
+  v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+/**
+ * Swap every \`\`\`mermaid block in the editor's HTML for its rendered diagram.
+ * A block that does not parse stays as code, so the export still carries it.
+ */
+export async function withDiagrams(
+  bodyHtml: string,
+  render: (def: string) => Promise<string>,
+): Promise<string> {
+  const doc = new DOMParser().parseFromString(`<body>${bodyHtml}</body>`, 'text/html')
+  for (const code of doc.querySelectorAll('pre > code.language-mermaid')) {
+    try {
+      const figure = doc.createElement('figure')
+      figure.className = 'mermaid'
+      // Mermaid's own output under securityLevel 'strict', sanitized by its DOMPurify;
+      // parsed into an inert DOMParser document, and the PDF frame runs no scripts.
+      figure.innerHTML = await render(code.textContent ?? '')
+      code.parentElement?.replaceWith(figure)
+    } catch {
+      /* bad syntax: the source stays in the export, readable as code */
+    }
+  }
+  return doc.body.innerHTML
+}
+
+/**
+ * Where each PDF page ends, in CSS px of the laid-out document. A page ends at
+ * the last block that fits on it (`bottoms`: where paragraphs, rows, list
+ * items and diagrams end), so no line or table row is sliced in half; only a
+ * single block taller than a page is cut, at the page edge.
+ */
+export function pageBreaks(bottoms: number[], total: number, pageH: number): number[] {
+  const cuts = [...new Set(bottoms.map(Math.ceil))].filter((b) => b > 0 && b < total).sort((a, b) => a - b)
+  const ends: number[] = []
+  let start = 0
+  let i = 0
+  while (total - start > pageH) {
+    let end = start + pageH
+    while (i < cuts.length && cuts[i] <= start) i++
+    let j = i
+    while (j < cuts.length && cuts[j] <= start + pageH) j++
+    if (j > i) end = cuts[j - 1]
+    ends.push(end)
+    start = end
+  }
+  ends.push(total)
+  return ends
 }
 
 /** Generate markdown text with optional YAML frontmatter and title */
@@ -69,8 +122,9 @@ export function buildExportHtml(
   note: VaultNote,
   bodyHtml: string,
   options: Pick<ExportOptions, 'includeMetadata' | 'includeTitle'>,
+  forPdf = false,
 ): string {
-  const title = note.title || 'Untitled'
+  const title = esc(note.title || 'Untitled')
 
   let propertiesHtml = ''
   if (options.includeMetadata) {
@@ -91,7 +145,7 @@ export function buildExportHtml(
             ([k, v]) => `
           <div class="property-row">
             <span class="property-key">${k}</span>
-            <span class="property-val">${v}</span>
+            <span class="property-val">${esc(v)}</span>
           </div>`,
           )
           .join('')}
@@ -99,13 +153,14 @@ export function buildExportHtml(
     }
   }
 
-  const titleHtml = options.includeTitle && note.title ? `<h1 class="page-title">${note.title}</h1>` : ''
+  const titleHtml = options.includeTitle && note.title ? `<h1 class="page-title">${title}</h1>` : ''
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  ${forPdf ? '<meta name="color-scheme" content="light">' : ''}
   <title>${title}</title>
   <style>
     :root {
@@ -118,7 +173,7 @@ export function buildExportHtml(
       --accent: #0c8f60;
       --code-bg: #f1f4f9;
     }
-    @media (prefers-color-scheme: dark) {
+    ${forPdf ? '' : `@media (prefers-color-scheme: dark) {
       :root {
         --bg: #0a0d12;
         --fg: #dbe2ee;
@@ -128,7 +183,7 @@ export function buildExportHtml(
         --accent: #46e394;
         --code-bg: #131926;
       }
-    }
+    }`}
     body {
       background: var(--bg);
       color: var(--fg);
@@ -136,7 +191,7 @@ export function buildExportHtml(
       font-size: 15px;
       line-height: 1.7;
       margin: 0;
-      padding: 40px 20px;
+      padding: ${forPdf ? '0' : '40px 20px'};
     }
     .container {
       max-width: 800px;
@@ -234,6 +289,17 @@ export function buildExportHtml(
       color: var(--accent);
       text-decoration: underline;
     }
+    figure.mermaid {
+      margin: 1.5em 0;
+      text-align: center;
+    }
+    figure.mermaid svg {
+      max-width: 100%;
+      height: auto;
+    }
+    tr { break-inside: avoid; }
+    /* Tiptap wraps every cell in a <p>; its paragraph margin would double each row. */
+    th p, td p { margin: 0; }
   </style>
 </head>
 <body>
@@ -248,187 +314,66 @@ export function buildExportHtml(
 </html>`
 }
 
-/** Generate a clean formatted PDF document using jsPDF */
-export function buildExportPdf(
+const A4_W_MM = 210
+const A4_H_MM = 297
+const MARGIN_MM = 16
+/** The width, in CSS px, the page is laid out at before it is scaled onto A4. */
+const PAGE_PX = 720
+/** Blocks a page may end after; see `pageBreaks`. */
+const BLOCKS = '.container > *, .content > *, .content li, .content tr, .property-row'
+
+/**
+ * A PDF of the export HTML, so tables, formatting and diagrams look the way
+ * they do in the HTML export. The page is laid out in a hidden iframe and
+ * painted with html2canvas, then cut into A4 pages between blocks.
+ * ponytail: pages are images, so PDF text is not selectable; a vector renderer is the upgrade if that matters.
+ */
+export async function buildExportPdf(
   note: VaultNote,
+  bodyHtml: string,
   options: Pick<ExportOptions, 'includeMetadata' | 'includeTitle'>,
-): Blob {
-  const doc = new jsPDF({
-    unit: 'mm',
-    format: 'a4',
-  })
+): Promise<Blob> {
+  const url = URL.createObjectURL(new Blob([buildExportHtml(note, bodyHtml, options, true)], { type: 'text/html' }))
+  const frame = document.createElement('iframe')
+  // Same origin so the document can be read; no scripts, so nothing in a note can run.
+  frame.setAttribute('sandbox', 'allow-same-origin')
+  frame.style.cssText = `position:fixed;left:-10000px;top:0;width:${PAGE_PX}px;height:1000px;border:0`
+  try {
+    await new Promise<void>((resolve) => {
+      frame.onload = () => resolve()
+      frame.src = url
+      document.body.appendChild(frame)
+    })
+    const doc = frame.contentDocument
+    if (!doc) throw new Error('export frame did not load')
+    await doc.fonts.ready
+    const body = doc.body
+    frame.style.height = `${body.scrollHeight}px`
+    const { default: html2canvas } = await import('html2canvas')
+    const scale = 2
+    const canvas = await html2canvas(body, { scale, backgroundColor: '#ffffff', logging: false, windowWidth: PAGE_PX })
 
-  const M = 20
-  const pageWidth = 210
-  const maxW = pageWidth - M * 2
-  const pageHeight = 297
-  let y = M
+    const mmPerPx = (A4_W_MM - 2 * MARGIN_MM) / PAGE_PX
+    const top = body.getBoundingClientRect().top
+    const bottoms = [...body.querySelectorAll(BLOCKS)].map((el) => el.getBoundingClientRect().bottom - top)
+    const ends = pageBreaks(bottoms, canvas.height / scale, (A4_H_MM - 2 * MARGIN_MM) / mmPerPx)
 
-  const ensureSpace = (needMm: number) => {
-    if (y + needMm > pageHeight - M) {
-      doc.addPage()
-      y = M
-    }
+    const pdf = new jsPDF({ unit: 'mm', format: 'a4', compress: true })
+    let from = 0
+    ends.forEach((end, page) => {
+      if (page) pdf.addPage()
+      const slice = document.createElement('canvas')
+      slice.width = canvas.width
+      slice.height = Math.ceil((end - from) * scale)
+      slice.getContext('2d')?.drawImage(canvas, 0, -Math.floor(from * scale))
+      pdf.addImage(slice, 'PNG', MARGIN_MM, MARGIN_MM, A4_W_MM - 2 * MARGIN_MM, (end - from) * mmPerPx)
+      from = end
+    })
+    return pdf.output('blob')
+  } finally {
+    frame.remove()
+    URL.revokeObjectURL(url)
   }
-
-  // Title
-  if (options.includeTitle && note.title) {
-    doc.setFont('helvetica', 'bold')
-    doc.setFontSize(22)
-    doc.setTextColor(28, 36, 51)
-    const titleLines = doc.splitTextToSize(note.title, maxW)
-    ensureSpace(titleLines.length * 9 + 4)
-    doc.text(titleLines, M, y)
-    y += titleLines.length * 9 + 4
-  }
-
-  // Metadata / Properties
-  if (options.includeMetadata) {
-    const props: Array<[string, string]> = []
-    if (note.status) props.push(['Status', note.status])
-    if (note.priority) props.push(['Priority', note.priority])
-    if (note.assignee) props.push(['Assignee', note.assignee])
-    if (note.dueDate) props.push(['Due Date', note.dueDate])
-    if (note.updatedAt) props.push(['Updated', note.updatedAt])
-
-    if (props.length > 0) {
-      ensureSpace(12 + props.length * 5)
-      doc.setFont('helvetica', 'bold')
-      doc.setFontSize(9)
-      doc.setTextColor(100, 110, 125)
-      props.forEach(([k, v]) => {
-        doc.text(`${k}: ${v}`, M, y)
-        y += 5
-      })
-      y += 3
-      doc.setDrawColor(220, 226, 235)
-      doc.setLineWidth(0.3)
-      doc.line(M, y, M + maxW, y)
-      y += 6
-    }
-  }
-
-  // Parse markdown lines
-  const lines = note.body.split('\n')
-  let inCode = false
-
-  for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i]
-    const trimmed = raw.trim()
-
-    if (trimmed.startsWith('```')) {
-      inCode = !inCode
-      continue
-    }
-
-    if (!trimmed) {
-      y += 3
-      continue
-    }
-
-    if (inCode) {
-      doc.setFont('courier', 'normal')
-      doc.setFontSize(9)
-      doc.setTextColor(60, 70, 85)
-      const codeLines = doc.splitTextToSize(raw, maxW - 4)
-      ensureSpace(codeLines.length * 4.5 + 2)
-      doc.setFillColor(245, 247, 250)
-      doc.rect(M, y - 3, maxW, codeLines.length * 4.5 + 2, 'F')
-      doc.text(codeLines, M + 2, y + 1)
-      y += codeLines.length * 4.5 + 4
-      continue
-    }
-
-    // Heading 1
-    if (trimmed.startsWith('# ')) {
-      ensureSpace(14)
-      doc.setFont('helvetica', 'bold')
-      doc.setFontSize(16)
-      doc.setTextColor(20, 28, 40)
-      const text = trimmed.replace(/^#\s+/, '')
-      const wrapped = doc.splitTextToSize(text, maxW)
-      doc.text(wrapped, M, y)
-      y += wrapped.length * 7 + 3
-      continue
-    }
-
-    // Heading 2
-    if (trimmed.startsWith('## ')) {
-      ensureSpace(12)
-      doc.setFont('helvetica', 'bold')
-      doc.setFontSize(13)
-      doc.setTextColor(30, 40, 55)
-      const text = trimmed.replace(/^##\s+/, '')
-      const wrapped = doc.splitTextToSize(text, maxW)
-      doc.text(wrapped, M, y)
-      y += wrapped.length * 6 + 2
-      continue
-    }
-
-    // Heading 3
-    if (trimmed.startsWith('### ')) {
-      ensureSpace(10)
-      doc.setFont('helvetica', 'bold')
-      doc.setFontSize(11)
-      doc.setTextColor(45, 55, 72)
-      const text = trimmed.replace(/^###\s+/, '')
-      const wrapped = doc.splitTextToSize(text, maxW)
-      doc.text(wrapped, M, y)
-      y += wrapped.length * 5 + 2
-      continue
-    }
-
-    // List item
-    if (/^[-*]\s+/.test(trimmed) || /^\d+\.\s+/.test(trimmed)) {
-      const isNum = /^\d+\.\s+/.test(trimmed)
-      const bullet = isNum ? trimmed.match(/^(\d+\.)/)?.[1] + ' ' : '• '
-      const text = trimmed.replace(/^([-*]|\d+\.)\s+/, '')
-      doc.setFont('helvetica', 'normal')
-      doc.setFontSize(10)
-      doc.setTextColor(35, 45, 60)
-      const wrapped = doc.splitTextToSize(text, maxW - 6)
-      ensureSpace(wrapped.length * 5 + 1)
-      doc.text(bullet, M, y)
-      doc.text(wrapped, M + 5, y)
-      y += wrapped.length * 5 + 1.5
-      continue
-    }
-
-    // Table row
-    if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
-      if (/^\|[\s:|-]+\|$/.test(trimmed)) continue
-      const cells = trimmed
-        .replace(/^\|/, '')
-        .replace(/\|$/, '')
-        .split('|')
-        .map((c) => c.trim())
-
-      const colW = maxW / Math.max(1, cells.length)
-      ensureSpace(7)
-      doc.setFont('helvetica', 'normal')
-      doc.setFontSize(9)
-      doc.setTextColor(30, 40, 55)
-      cells.forEach((cell, cIdx) => {
-        const truncated = doc.splitTextToSize(cell, colW - 2)[0] || ''
-        doc.text(truncated, M + cIdx * colW + 1, y)
-      })
-      y += 5.5
-      doc.setDrawColor(230, 235, 242)
-      doc.line(M, y - 1, M + maxW, y - 1)
-      continue
-    }
-
-    // Regular paragraph
-    doc.setFont('helvetica', 'normal')
-    doc.setFontSize(10)
-    doc.setTextColor(35, 45, 60)
-    const wrapped = doc.splitTextToSize(trimmed, maxW)
-    ensureSpace(wrapped.length * 5 + 2)
-    doc.text(wrapped, M, y)
-    y += wrapped.length * 5 + 2
-  }
-
-  return doc.output('blob')
 }
 
 /** Build the export and save it; the saved path, or null when cancelled. */
@@ -436,15 +381,19 @@ export async function exportNote(
   note: VaultNote,
   bodyHtml: string,
   options: ExportOptions,
+  dir = '',
 ): Promise<string | null> {
   const ext = options.format === 'markdown' ? 'md' : options.format
   const filename = sanitizeFilename(note.title || 'untitled', ext)
 
+  if (options.format === 'markdown') {
+    const md = buildExportMarkdown(note, options)
+    return saveExport(filename, dir, new Blob([md], { type: 'text/markdown;charset=utf-8' }))
+  }
+  const html = await withDiagrams(bodyHtml, (def) => renderMermaid(def, { forExport: true }))
   const blob =
-    options.format === 'markdown'
-      ? new Blob([buildExportMarkdown(note, options)], { type: 'text/markdown;charset=utf-8' })
-      : options.format === 'html'
-        ? new Blob([buildExportHtml(note, bodyHtml, options)], { type: 'text/html;charset=utf-8' })
-        : buildExportPdf(note, options)
-  return saveExport(filename, blob)
+    options.format === 'html'
+      ? new Blob([buildExportHtml(note, html, options)], { type: 'text/html;charset=utf-8' })
+      : await buildExportPdf(note, html, options)
+  return saveExport(filename, dir, blob)
 }
