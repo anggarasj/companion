@@ -313,7 +313,7 @@ key prefix and the `rapat` tag are data, not copy.
   forgets it. Switching probes first and refuses a folder that is gone —
   `set_vault_root` would recreate it empty. Page `icon`/`cover` are
   frontmatter; uploaded images are copied into the vault's `.assets/` by
-  `import_vault_asset` and read back by `read_vault_image` (images only).
+  `import_vault_asset` and read back by `read_vault_bytes`.
   Dot folders are hidden from the tree.
 - The panel's model and effort pickers are a per-install override for editor
   AI (`loadSessionAI` in `aiSettings.ts`, localStorage), not a provider
