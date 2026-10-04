@@ -9,6 +9,7 @@ import {
   matchesPrefixes,
   parseAnalyses,
   parseMeetings,
+  mergeTranscriptEntries,
   parseTitles,
   saveTitle,
   getContext,
@@ -141,6 +142,35 @@ describe('parsers', () => {
     };
     await saveMiniContexts([item]);
     expect(await getMiniContexts()).toEqual([item]);
+  });
+});
+describe('mergeTranscriptEntries', () => {
+  it('orders every selected transcript by timestamp and keeps repeated captions', () => {
+    const merged = mergeTranscriptEntries([
+      {
+        id: 'destination',
+        meta: null,
+        entries: [entry('tujuan-late', '2026-01-01T10:02:00Z'), entry('repeat', '2026-01-01T10:03:00Z')],
+      },
+      {
+        id: 'source-a',
+        meta: null,
+        entries: [entry('source-early', '2026-01-01T10:01:00Z'), entry('repeat', '2026-01-01T10:03:00Z')],
+      },
+      {
+        id: 'source-b',
+        meta: null,
+        entries: [entry('source-middle', '2026-01-01T10:01:30Z')],
+      },
+    ]);
+
+    expect(merged.map((item) => item.text)).toEqual([
+      'source-early',
+      'source-middle',
+      'tujuan-late',
+      'repeat',
+      'repeat',
+    ]);
   });
 });
 
