@@ -34,6 +34,10 @@ export interface VaultNote {
   assignee?: string
   priority?: string
   dueDate?: string
+  /** Page icon: an emoji, or a vault-relative image path. */
+  icon?: string
+  /** Page cover: a vault-relative image path. */
+  cover?: string
   updatedAt: string
   /** Title = first `# Heading` in the body, else the filename. */
   title: string
@@ -52,6 +56,8 @@ const QUOTED: Record<string, boolean> = {
   assignee: true,
   priority: true,
   dueDate: true,
+  icon: true,
+  cover: true,
   updatedAt: true,
 }
 /** Frontmatter keys serialized as a YAML list. */
@@ -73,6 +79,8 @@ const ORDER = [
   'assignee',
   'priority',
   'dueDate',
+  'icon',
+  'cover',
   'updatedAt',
 ] as const
 
@@ -162,6 +170,8 @@ export function noteFromMarkdown(doc: string, fallbackTitle = ''): VaultNote {
     assignee: first('assignee'),
     priority: first('priority'),
     dueDate: first('dueDate'),
+    icon: first('icon'),
+    cover: first('cover'),
     updatedAt: first('updatedAt') ?? '',
     title: (h ? h[1].trim() : fallbackTitle).trim(),
     body: bodyCore.trim(),

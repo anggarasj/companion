@@ -166,6 +166,18 @@ describe('a note that has been moved', () => {
     expect(skipped).toEqual(['y/two.md'])
     expect(search(driver, 'One')[0].path).toBe('x/one.md')
   })
+
+  it('indexes .md files from other editors, which carry no identity at all', async () => {
+    // A vault opened on an existing docs folder: every file parses with id
+    // and session key "". They used to collide and vanish from search.
+    const { driver } = await openDatabase()
+    const plain = ['Activity', 'Architecture', 'Rangkuman'].map((title) =>
+      note({ id: '', sessionKey: '', startedAt: undefined, title }),
+    )
+    const skipped = await createIndex(driver, vault, plain, ['a.md', 'b/c.md', 'RANGKUMAN-APS.md'])
+    expect(skipped).toEqual([])
+    expect(search(driver, 'Rangkuman')[0].path).toBe('RANGKUMAN-APS.md')
+  })
 })
 
 describe('derived index', () => {

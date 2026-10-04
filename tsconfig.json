@@ -15,6 +15,7 @@
     "types": ["chrome", "node", "vite/client"],
     "baseUrl": ".",
     "paths": {
+      "@/*": ["apps/desktop/src/*"],
       "@meetcc/shared": ["packages/shared/src"],
       "@meetcc/shared/i18n": ["packages/shared/src/i18n"],
       "@meetcc/ai": ["packages/ai/src"],

@@ -9,7 +9,9 @@
 // display is localised.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { formatDate, locale, t } from '@meetcc/shared/i18n'
-import { Button } from '@meetcc/ui'
+import { CalendarDays, ChevronLeft, ChevronRight, X } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
 
 /** Weekday initials and month names come from Intl, so they follow the
     language without a second list to keep in step with the catalogue. */
@@ -95,68 +97,81 @@ export function DateField({
     setMonth((m) => new Date(m.getFullYear(), m.getMonth() + by, 1))
 
   return (
-    <div className="datefield" ref={wrap}>
-      <Button type="button"
-      className="datefield-button"
-      onClick={() => setOpen((o) => !o)}
-      aria-haspopup="dialog"
-      aria-expanded={open}><span className={value ? undefined : 'placeholder'}>{label(value) || t('desktop.date.pick')}</span>
-      {/* Clearing has to be reachable: a due date that cannot be removed is
-          worse than one that was never set. */}
-      {value && (
-        <span
-          role="button"
-          tabIndex={0}
-          className="datefield-clear"
-          aria-label={t('desktop.date.clear')}
-          onClick={(e) => {
-            e.stopPropagation()
-            onChange('')
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
+    <div className="relative" ref={wrap}>
+      <button
+        type="button"
+        className="flex h-[34px] w-full items-center justify-between gap-1.5 rounded-lg border bg-sunken px-2.5 text-left text-[13px] text-foreground hover:border-muted-foreground"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+      >
+        <CalendarDays className="size-3.5 flex-none text-muted-foreground" aria-hidden="true" />
+        <span className={cn('flex-1', !value && 'text-muted-foreground')}>{label(value) || t('desktop.date.pick')}</span>
+        {/* Clearing has to be reachable: a due date that cannot be removed is
+            worse than one that was never set. */}
+        {value && (
+          <span
+            role="button"
+            tabIndex={0}
+            className="flex-none px-0.5 text-muted-foreground hover:text-destructive"
+            aria-label={t('desktop.date.clear')}
+            onClick={(e) => {
               e.stopPropagation()
-              e.preventDefault()
               onChange('')
-            }
-          }}
-        >
-          ×
-        </span>
-      )}</Button>
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.stopPropagation()
+                e.preventDefault()
+                onChange('')
+              }
+            }}
+          >
+            <X className="size-3.5" />
+          </span>
+        )}
+      </button>
 
       {open && (
-        <div className="calendar" role="dialog" aria-label={t('desktop.date.dialog')}>
-          <div className="calendar-head">
-            <Button type="button" onClick={() => shift(-1)} aria-label={t('desktop.date.prevMonth')}>
-              ‹
+        // Anchored to the trigger's right edge: this is the last field in the
+        // row, so a left-anchored popover runs off the window.
+        <div
+          className="absolute right-0 top-[calc(100%+6px)] z-20 w-[244px] rounded-xl border bg-popover p-2.5 text-popover-foreground shadow-lg"
+          role="dialog"
+          aria-label={t('desktop.date.dialog')}
+        >
+          <div className="mb-2 flex items-center justify-between">
+            <Button type="button" variant="ghost" size="icon-xs" onClick={() => shift(-1)} aria-label={t('desktop.date.prevMonth')}>
+              <ChevronLeft />
             </Button>
-            <strong>{monthName(month)}</strong>
-            <Button type="button" onClick={() => shift(1)} aria-label={t('desktop.date.nextMonth')}>
-              ›
+            <strong className="text-[12.5px] font-semibold">{monthName(month)}</strong>
+            <Button type="button" variant="ghost" size="icon-xs" onClick={() => shift(1)} aria-label={t('desktop.date.nextMonth')}>
+              <ChevronRight />
             </Button>
           </div>
 
-          <div className="calendar-grid">
+          <div className="grid grid-cols-7 gap-0.5">
             {dayNames.map((d, i) => (
-              <span key={i} className="calendar-dow">
+              <span
+                key={i}
+                className="pb-1 text-center font-mono text-[9.5px] font-semibold uppercase leading-none tracking-wider text-muted-foreground"
+              >
                 {d}
               </span>
             ))}
             {days.map((d) => {
               const key = iso(d)
+              const selected = key === value
               return (
                 <button
                   key={key}
                   type="button"
-                  className={[
-                    'calendar-day',
-                    d.getMonth() === month.getMonth() ? '' : 'outside',
-                    key === value ? 'selected' : '',
-                    key === today ? 'today' : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
+                  className={cn(
+                    'h-7 rounded-md text-xs text-foreground hover:bg-muted',
+                    d.getMonth() !== month.getMonth() && 'text-muted-foreground opacity-50',
+                    key === today && 'ring-1 ring-inset ring-border',
+                    selected && 'bg-primary font-semibold text-primary-foreground hover:bg-primary',
+                  )}
                   onClick={() => {
                     onChange(key)
                     setOpen(false)
@@ -168,8 +183,10 @@ export function DateField({
             })}
           </div>
 
-          <div className="calendar-foot">
-            <Button type="button" onClick={() => { onChange(today); setOpen(false) }}>{t('desktop.date.today')}</Button>
+          <div className="mt-2 border-t pt-2 text-right">
+            <Button type="button" variant="link" size="xs" onClick={() => { onChange(today); setOpen(false) }}>
+              {t('desktop.date.today')}
+            </Button>
           </div>
         </div>
       )}

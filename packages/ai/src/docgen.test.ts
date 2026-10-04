@@ -157,4 +157,13 @@ describe('generateDoc (draft -> critique -> revise)', () => {
     expect(lastStep).toBe(lastTotal) // finished
     expect(steps.every(([s, t]) => s <= t)).toBe(true)
   })
+
+  it('runs a custom brief through the same grounded pipeline', async () => {
+    const { client, systems } = seq(['# RFC', 'ada masalah', '# RFC FINAL'])
+    const out = await generateDoc(client, meeting, null, { label: 'RFC', instruction: 'Buat RFC dari pembahasan arsitektur.' })
+    expect(out).toContain('# RFC FINAL')
+    expect(systems[0]).toContain('Buat RFC dari pembahasan arsitektur.')
+    expect(systems[0]).toContain('_[belum dibahas]_')
+    expect(systems[1]).toContain('RFC')
+  })
 })

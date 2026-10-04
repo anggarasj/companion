@@ -11,6 +11,7 @@
 // is obfuscation by its own admission and a desktop has a real keychain.
 import { invoke } from '@tauri-apps/api/core'
 import { DEFAULT_SETTINGS, type Settings } from '@meetcc/shared/types'
+import { createClient, resolveConfig, validateSettings, type AIClient, type Effort } from '@meetcc/ai'
 
 /** Keychain entry names. Two, so revoking a key leaves a sign-in alone. */
 const API_KEY = 'apiKey'
@@ -57,4 +58,57 @@ export async function saveAiSettings(settings: Settings): Promise<void> {
   // removes the tokens rather than leaving them behind the UI that hid them.
   const signedIn = Boolean(oauth?.accessToken || oauth?.refreshToken)
   await invoke('save_secret', { name: OAUTH, value: signedIn ? JSON.stringify(oauth) : '' })
+}
+
+/**
+ * The model and effort picked in the AI panel. A per-install preference, not a
+ * provider setting: it overrides the model for editor AI without touching
+ * what Settings saved (the meeting pipeline keeps using that), and an empty
+ * model means "whatever Settings says".
+ */
+export type EffortPref = 'auto' | Effort
+export interface SessionAI {
+  model: string
+  effort: EffortPref
+}
+const SESSION_KEY = 'companion:aiSession'
+
+export function loadSessionAI(): SessionAI {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SESSION_KEY) ?? '{}') as Partial<SessionAI>
+    const effort = ['low', 'medium', 'high'].includes(raw.effort as string) ? (raw.effort as Effort) : 'auto'
+    return { model: typeof raw.model === 'string' ? raw.model : '', effort }
+  } catch {
+    return { model: '', effort: 'auto' }
+  }
+}
+
+export function saveSessionAI(prefs: SessionAI): void {
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(prefs))
+  } catch {
+    /* still applies until the window closes */
+  }
+}
+
+/** Settings as editor AI sees them: the saved provider, the panel's model. */
+export async function editorAiSettings(): Promise<Settings> {
+  const settings = await loadAiSettings()
+  const { model } = loadSessionAI()
+  return model ? { ...settings, model } : settings
+}
+
+/**
+ * The client for whichever provider the user configured, or an Error saying
+ * what is missing. Read per request, so a change in Settings or in the panel's
+ * model and effort pickers applies to the next request without a restart.
+ */
+export async function configuredClient(): Promise<AIClient> {
+  const settings = await editorAiSettings()
+  const problem = validateSettings(settings)
+  if (problem) throw new Error(problem)
+  const client = createClient(resolveConfig(settings))
+  const { effort } = loadSessionAI()
+  if (effort === 'auto') return client
+  return { provider: client.provider, complete: (req) => client.complete({ effort, ...req }) }
 }

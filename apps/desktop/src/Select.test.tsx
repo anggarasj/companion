@@ -109,15 +109,15 @@ describe('Select', () => {
       />,
     )
     const trigger = screen.getByLabelText('Priority')
-    expect(trigger.querySelector('.tone-dot.tone-danger')).toBeTruthy()
-    expect(trigger.querySelector('.tone-label.tone-danger')).toBeTruthy()
+    expect(trigger.querySelector('[data-dot="danger"]')).toBeTruthy()
+    expect(trigger.querySelector('[data-tone="danger"]')).toBeTruthy()
   })
 
   it('shows an unset value as hollow rather than as a grey status', async () => {
     render(
       <Select label="Status" value="" options={[{ value: '', label: '—' }]} onChange={() => {}} />,
     )
-    expect(screen.getByLabelText('Status').querySelector('.tone-dot.tone-empty')).toBeTruthy()
+    expect(screen.getByLabelText('Status').querySelector('[data-dot="empty"]')).toBeTruthy()
   })
 
   it('falls back to neutral for a value with no tone', async () => {
@@ -129,7 +129,7 @@ describe('Select', () => {
         onChange={() => {}}
       />,
     )
-    expect(screen.getByLabelText('Status').querySelector('.tone-dot.tone-neutral')).toBeTruthy()
+    expect(screen.getByLabelText('Status').querySelector('[data-dot="neutral"]')).toBeTruthy()
   })
 
   it('keeps a value it does not recognise selectable', async () => {
@@ -153,7 +153,7 @@ describe('Select', () => {
   it('opens upwards when there is no room below', async () => {
     const user = userEvent.setup()
     render(<Select label="Folder" value="" options={OPTIONS} onChange={() => {}} />)
-    const wrap = screen.getByLabelText('Folder').closest('.select') as HTMLElement
+    const wrap = screen.getByLabelText('Folder').parentElement as HTMLElement
     // jsdom lays nothing out, so the geometry is the thing under test.
     vi.spyOn(wrap, 'getBoundingClientRect').mockReturnValue({
       top: 700,
@@ -161,17 +161,17 @@ describe('Select', () => {
     } as DOMRect)
     window.innerHeight = 800
     await user.click(screen.getByLabelText('Folder'))
-    expect(wrap.querySelector('.select-list.up')).toBeTruthy()
+    expect(wrap.querySelector('[role="listbox"][data-side="top"]')).toBeTruthy()
   })
 
   it('opens downwards when it fits', async () => {
     const user = userEvent.setup()
     render(<Select label="Folder" value="" options={OPTIONS} onChange={() => {}} />)
-    const wrap = screen.getByLabelText('Folder').closest('.select') as HTMLElement
+    const wrap = screen.getByLabelText('Folder').parentElement as HTMLElement
     vi.spyOn(wrap, 'getBoundingClientRect').mockReturnValue({ top: 40, bottom: 80 } as DOMRect)
     window.innerHeight = 800
     await user.click(screen.getByLabelText('Folder'))
-    expect(wrap.querySelector('.select-list')).toBeTruthy()
-    expect(wrap.querySelector('.select-list.up')).toBeNull()
+    expect(wrap.querySelector('[role="listbox"]')).toBeTruthy()
+    expect(wrap.querySelector('[role="listbox"][data-side="top"]')).toBeNull()
   })
 })

@@ -298,3 +298,95 @@ describe('subscription sign-ins', () => {
     expect(await createClient(signedIn('google-codeassist')).complete(REQ)).toBe('halo');
   });
 });
+
+describe('reasoning effort', () => {
+  const R = { system: 'sys', user: 'usr', effort: 'high' as const };
+
+  it('is sent only to OpenAI models that take it', async () => {
+    let cap = stubFetch(OPENAI_OK);
+    await createClient(s({ provider: 'openai', apiKey: 'k', model: 'gpt-5-mini' })).complete(R);
+    expect(cap.body.reasoning_effort).toBe('high');
+    cap = stubFetch(OPENAI_OK);
+    await createClient(s({ provider: 'openai', apiKey: 'k', model: 'gpt-4o-mini' })).complete(R);
+    expect(cap.body).not.toHaveProperty('reasoning_effort');
+  });
+
+  it('never reaches a local model', async () => {
+    const cap = stubFetch(OPENAI_OK);
+    await createClient(s({ provider: 'ollama', baseUrl: 'http://localhost:11434', model: 'llama3.1' })).complete(R);
+    expect(cap.body).not.toHaveProperty('reasoning_effort');
+    expect(cap.body).not.toHaveProperty('reasoning');
+  });
+
+  it('openrouter uses its normalised reasoning field', async () => {
+    const cap = stubFetch(OPENAI_OK);
+    await createClient(s({ provider: 'openrouter', apiKey: 'k', model: 'anthropic/claude-sonnet-4.5' })).complete(R);
+    expect(cap.body.reasoning).toEqual({ effort: 'high' });
+  });
+
+  it('gemini 2.5+ gets a thinking budget, 2.0 does not', async () => {
+    let cap = stubFetch({ candidates: [{ content: { parts: [{ text: 'ok' }] } }] });
+    await createClient(s({ provider: 'gemini', apiKey: 'k', model: 'gemini-2.5-flash' })).complete(R);
+    expect(cap.body.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 24576 });
+    cap = stubFetch({ candidates: [{ content: { parts: [{ text: 'ok' }] } }] });
+    await createClient(s({ provider: 'gemini', apiKey: 'k', model: 'gemini-2.0-flash' })).complete(R);
+    expect(cap.body.generationConfig).not.toHaveProperty('thinkingConfig');
+  });
+
+  it('anthropic enables thinking and reads the text block, not the thinking block', async () => {
+    const cap = stubFetch({
+      content: [
+        { type: 'thinking', thinking: 'hmm' },
+        { type: 'text', text: 'answer' },
+      ],
+    });
+    const out = await createClient(s({ provider: 'anthropic', apiKey: 'k', model: 'claude-sonnet-4-5' })).complete({ ...R, effort: 'low' });
+    expect(out).toBe('answer');
+    expect(cap.body.thinking).toEqual({ type: 'enabled', budget_tokens: 1024 });
+    expect(cap.body.max_tokens).toBe(4096 + 1024);
+  });
+
+  it('no effort, no extra fields', async () => {
+    const cap = stubFetch({ content: [{ type: 'text', text: 'x' }] });
+    await createClient(s({ provider: 'anthropic', apiKey: 'k', model: 'claude-sonnet-4-5' })).complete({ system: 's', user: 'u' });
+    expect(cap.body).not.toHaveProperty('thinking');
+    expect(cap.body.max_tokens).toBe(4096);
+  });
+});
+
+describe('reasoning effort on OpenAI-compatible gateways', () => {
+  const R = { system: 'sys', user: 'usr', effort: 'medium' as const };
+
+  it('a gateway-prefixed reasoning model gets reasoning_effort', async () => {
+    const cap = stubFetch(OPENAI_OK);
+    await createClient(s({ provider: 'custom', baseUrl: 'https://gw.example/v1', model: 'ag/gemini-3.8-flash' })).complete(R);
+    expect(cap.body.reasoning_effort).toBe('medium');
+  });
+
+  it('retries once without it when the gateway rejects the field', async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(init.body as string);
+        bodies.push(body);
+        return body.reasoning_effort
+          ? new Response('{"error":"Unrecognized request argument: reasoning_effort"}', { status: 400 })
+          : new Response(JSON.stringify(OPENAI_OK), { status: 200 });
+      }),
+    );
+    const out = await createClient(s({ provider: 'custom', baseUrl: 'https://gw.example/v1', model: 'gemini-2.5-pro' })).complete(R);
+    expect(out).toBe('halo');
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1]).not.toHaveProperty('reasoning_effort');
+  });
+
+  it('a 400 about something else is not retried', async () => {
+    let calls = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => (calls++, new Response('{"error":"bad model"}', { status: 400 }))));
+    await expect(
+      createClient(s({ provider: 'custom', baseUrl: 'https://gw.example/v1', model: 'gpt-5' })).complete(R),
+    ).rejects.toThrow('HTTP 400');
+    expect(calls).toBe(1);
+  });
+});

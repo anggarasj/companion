@@ -44,8 +44,14 @@ export function saveTarget(input: SaveInput): SaveTarget {
 
   const archived = Boolean(note.platform && note.platform !== 'manual')
   if (!archived) {
-    const rel = selected ?? inFolder(relPath(note))
-    return { rel, note: { ...note, updatedAt: now() }, copied: false }
+    // A file from another editor arrives without id or session key; the
+    // first save here gives it both, so it has an identity from then on.
+    const identity = {
+      id: note.id || uuidV7(),
+      sessionKey: note.sessionKey || (input.newSessionKey?.() ?? `nota/${Date.now().toString(36)}`),
+    }
+    const rel = selected ?? inFolder(relPath({ ...note, ...identity }))
+    return { rel, note: { ...note, ...identity, updatedAt: now() }, copied: false }
   }
 
   const prior = input.existing?.find((e) => e.source === note.sessionKey)
@@ -92,4 +98,25 @@ export function settleSaved(
     note: { ...current, id, sessionKey, platform, source, transcript, updatedAt },
     dirty: true,
   }
+}
+
+/**
+ * A readable path for a document created in one step (by AI), named after its
+ * title rather than a session key, and never on top of an existing file —
+ * a collision gets ` 2`, ` 3`, … the way Finder names a copy.
+ */
+export function docPath(folder: string, title: string, existing: readonly string[]): string {
+  const name =
+    title
+      .replace(/[/\\:*?"<>|#^[\]]+/g, '-')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/^\.+/, '')
+      .slice(0, 80)
+      .trim() || 'Untitled'
+  const taken = new Set(existing.map((r) => r.toLowerCase()))
+  const at = (n: number) => `${folder ? `${folder}/` : ''}${name}${n > 1 ? ` ${n}` : ''}.md`
+  let n = 1
+  while (taken.has(at(n).toLowerCase())) n++
+  return at(n)
 }

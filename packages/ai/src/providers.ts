@@ -1,5 +1,5 @@
 import type { Settings } from '@meetcc/shared';
-import { AIError, resolveConfig, type AIClient, type CompletionRequest } from './client';
+import { AIError, resolveConfig, type AIClient, type CompletionRequest, type Effort } from './client';
 import { t } from '@meetcc/shared/i18n';
 
 // A hung provider (no response, no error) would leave the pipeline stuck on
@@ -143,6 +143,69 @@ async function readBody(res: Response): Promise<string> {
   }
 }
 
+/**
+ * Whether the configured model takes a reasoning-effort setting, and in which
+ * wire shape. Model-gated on purpose: OpenAI answers `reasoning_effort` sent
+ * to gpt-4o with a 400, so a setting for models that cannot use it would turn
+ * a working provider into a broken one. Unknown names get nothing.
+ */
+export function effortKind(
+  s: Pick<Settings, 'provider' | 'model'>,
+): 'openai' | 'openrouter' | 'responses' | 'gemini' | 'anthropic' | null {
+  const model = s.model.toLowerCase();
+  switch (s.provider) {
+    case 'chatgpt':
+      return 'responses';
+    case 'openai':
+    case 'azure':
+    case 'custom':
+    case 'ollama':
+    case 'lmstudio':
+      // OpenAI-compatible endpoints, gateways included: `reasoning_effort` is
+      // the field Gemini's and most gateways' compatible APIs accept too.
+      return REASONING_MODEL.test(model) ? 'openai' : null;
+    case 'openrouter':
+      // OpenRouter normalises `reasoning` across vendors and drops it for
+      // models without it.
+      return 'openrouter';
+    case 'gemini':
+    case 'google-codeassist':
+      return /gemini-(2\.5|[3-9])/.test(model) ? 'gemini' : null;
+    case 'anthropic':
+      // Extended thinking: Claude 3.7 and every family from 4 on.
+      return /claude-(3-7|(opus|sonnet|haiku)-[4-9]|[4-9])/.test(model) ? 'anthropic' : null;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Model families that reason, by name, whatever prefix a gateway puts in front
+ * ("ag/gemini-3.8-flash", "openai/gpt-5"). Kept to families documented to
+ * take an effort setting; a name not on it gets no field rather than a 400.
+ */
+const REASONING_MODEL =
+  /(^|[/:])(o\d|gpt-5|gpt-oss|gemini-(2\.5|[3-9])|claude-(3-7|(opus|sonnet|haiku)-[4-9]|[4-9])|deepseek-(r1|reasoner)|qwen3|qwq|magistral|grok-([4-9]|3-mini))/;
+
+export const supportsEffort = (s: Pick<Settings, 'provider' | 'model'>): boolean => effortKind(s) !== null;
+
+/** Token budgets for the providers that think in tokens rather than levels. */
+const THINKING_BUDGET: Record<Effort, number> = { low: 1024, medium: 8192, high: 24576 };
+
+/** The request fields that carry `effort` for this model, or nothing. */
+function effortFields(cfg: Settings, effort: Effort | undefined): Record<string, unknown> {
+  if (!effort) return {};
+  switch (effortKind(cfg)) {
+    case 'openai':
+      return { reasoning_effort: effort };
+    case 'openrouter':
+    case 'responses':
+      return { reasoning: { effort } };
+    default:
+      return {};
+  }
+}
+
 /** chat/completions call tolerant to both JSON and SSE-stream responses. */
 async function chatCompletions(
   url: string,
@@ -192,25 +255,39 @@ async function chatCompletions(
  * that ignores `stream` and answers with one JSON body still works.
  */
 function openAICompatible(cfg: Settings): AIClient {
+  const send = (req: CompletionRequest) =>
+    chatCompletions(
+      `${cfg.baseUrl}/chat/completions`,
+      cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {},
+      {
+        model: cfg.model,
+        temperature: 0.2,
+        stream: true,
+        messages: [
+          { role: 'system', content: req.system },
+          { role: 'user', content: req.user },
+        ],
+        ...(req.json && (cfg.provider === 'openai' || cfg.provider === 'openrouter')
+          ? { response_format: { type: 'json_object' } }
+          : {}),
+        ...effortFields(cfg, req.effort),
+      },
+    );
   return {
     provider: cfg.provider,
-    complete: (req: CompletionRequest) =>
-      chatCompletions(
-        `${cfg.baseUrl}/chat/completions`,
-        cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {},
-        {
-          model: cfg.model,
-          temperature: 0.2,
-          stream: true,
-          messages: [
-            { role: 'system', content: req.system },
-            { role: 'user', content: req.user },
-          ],
-          ...(req.json && (cfg.provider === 'openai' || cfg.provider === 'openrouter')
-            ? { response_format: { type: 'json_object' } }
-            : {}),
-        },
-      ),
+    async complete(req: CompletionRequest) {
+      try {
+        return await send(req);
+      } catch (e) {
+        // A gateway that forwards to a model without the setting answers 400
+        // naming it. The user asked for an answer, not for that field: retry
+        // once without it.
+        if (req.effort && e instanceof AIError && /HTTP 400/.test(e.message) && /reason/i.test(e.message)) {
+          return send({ ...req, effort: undefined });
+        }
+        throw e;
+      }
+    },
   };
 }
 
@@ -229,6 +306,7 @@ function azure(cfg: Settings): AIClient {
             { role: 'system', content: req.system },
             { role: 'user', content: req.user },
           ],
+          ...effortFields(cfg, req.effort),
         },
       ),
   };
@@ -247,12 +325,21 @@ function anthropic(cfg: Settings): AIClient {
         },
         {
           model: cfg.model,
-          max_tokens: 4096,
           system: req.system,
           messages: [{ role: 'user', content: req.user }],
+          // Thinking spends from max_tokens, so the answer keeps its 4096.
+          ...(req.effort && effortKind(cfg) === 'anthropic'
+            ? {
+                max_tokens: 4096 + THINKING_BUDGET[req.effort],
+                thinking: { type: 'enabled', budget_tokens: THINKING_BUDGET[req.effort] },
+              }
+            : { max_tokens: 4096 }),
         },
       );
-      const text = data.content?.[0]?.text;
+      // With thinking on, the first block is the thinking, not the answer.
+      const text = (data.content as Array<{ type?: string; text?: unknown }> | undefined)?.find(
+        (b) => b.type === 'text' || (b.type === undefined && typeof b.text === 'string'),
+      )?.text;
       if (typeof text !== 'string') throw new AIError('Empty completion', true);
       return text;
     },
@@ -272,6 +359,9 @@ function gemini(cfg: Settings): AIClient {
           generationConfig: {
             temperature: 0.2,
             ...(req.json ? { responseMimeType: 'application/json' } : {}),
+            ...(req.effort && effortKind(cfg) === 'gemini'
+              ? { thinkingConfig: { thinkingBudget: THINKING_BUDGET[req.effort] } }
+              : {}),
           },
         },
       );
@@ -308,6 +398,7 @@ function chatgptResponses(cfg: Settings): AIClient {
             { type: 'message', role: 'user', content: [{ type: 'input_text', text: req.user }] },
           ],
           stream: false,
+          ...effortFields(cfg, req.effort),
         }),
       });
       const text = await res.text();
@@ -390,6 +481,9 @@ function codeAssist(cfg: Settings): AIClient {
             generationConfig: {
               temperature: 0.2,
               ...(req.json ? { responseMimeType: 'application/json' } : {}),
+              ...(req.effort && effortKind(cfg) === 'gemini'
+                ? { thinkingConfig: { thinkingBudget: THINKING_BUDGET[req.effort] } }
+                : {}),
             },
           },
         },

@@ -6,7 +6,11 @@ import { invoke } from '@tauri-apps/api/core'
 import { check, type Update } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
 import { t } from '@meetcc/shared/i18n'
-import { Button } from '@meetcc/ui'
+import { Download, ExternalLink, RefreshCw } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { SETTING_HINT, SETTING_ROW } from '@/components/settingStyles'
 
 const RELEASES_URL = 'https://github.com/suiflex/companion/releases'
 
@@ -64,22 +68,23 @@ export function VersionPanel() {
 
   return (
     <>
-      <section className="setting-row">
+      <section className={SETTING_ROW}>
         <div>
           <h2>
             {t('desktop.version.current')}{' '}
-            <span className="version-pill">{version ? `v${version}` : '…'}</span>
+            <Badge className="ml-1.5 border-transparent bg-primary/14 font-mono text-[11px] text-primary">{version ? `v${version}` : '…'}</Badge>
           </h2>
-          <p className="hint" role="status">{status}</p>
+          <p className={SETTING_HINT} role="status">{status}</p>
         </div>
-        <div className="setting-actions">
+        <div className="flex flex-none items-center gap-2">
           {pending ? (
             <Button
               type="button"
-              variant="primary"
+              size="sm"
               disabled={state.kind === 'installing'}
               onClick={() => void install(pending)}
             >
+              <Download />
               {state.kind === 'installing'
                 ? t('desktop.update.installing')
                 : state.kind === 'failed'
@@ -87,19 +92,21 @@ export function VersionPanel() {
                   : t('desktop.update.restart')}
             </Button>
           ) : (
-            <Button type="button" disabled={state.kind === 'checking'} onClick={() => void checkNow()}>
+            <Button type="button" variant="outline" size="sm" disabled={state.kind === 'checking'} onClick={() => void checkNow()}>
+              <RefreshCw className={cn(state.kind === 'checking' && 'animate-spin')} />
               {t('desktop.version.check')}
             </Button>
           )}
         </div>
       </section>
 
-      <section className="setting-row">
+      <section className={SETTING_ROW}>
         <div>
           <h2>{t('desktop.version.releases')}</h2>
-          <p className="hint">{t('desktop.version.releasesHint')}</p>
+          <p className={SETTING_HINT}>{t('desktop.version.releasesHint')}</p>
         </div>
-        <Button type="button" onClick={() => void invoke('open_external', { url: RELEASES_URL })}>
+        <Button type="button" variant="outline" size="sm" onClick={() => void invoke('open_external', { url: RELEASES_URL })}>
+          <ExternalLink />
           {t('desktop.version.openReleases')}
         </Button>
       </section>

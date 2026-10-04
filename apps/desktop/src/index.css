@@ -1,0 +1,95 @@
+/* Theme tokens only — every rule the app draws is a Tailwind utility in the
+   component that owns it. Values are the extension's palette (packages/ui
+   styles.css), renamed to shadcn's token names. Dark is the default;
+   theme.ts stamps `body[data-theme='light']` before first paint. */
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:where(body:not([data-theme='light']) *));
+
+:root {
+  color-scheme: dark;
+  --background: #0a0d12;
+  --foreground: #dbe2ee;
+  --card: #0f131b;
+  --popover: #0f131b;
+  --muted: #131926;
+  --muted-foreground: #8b95a9;
+  --faint: #5c6579;
+  --sunken: #0d1119;
+  --primary: #46e394;
+  --primary-foreground: #0a0d12;
+  --destructive: #ff6b74;
+  --warning: #eec26a;
+  --info: #6aa9f0;
+  --border: #1d2434;
+  --input: #273043;
+  --ring: #46e394;
+}
+
+body[data-theme='light'] {
+  color-scheme: light;
+  --background: #ffffff;
+  --foreground: #1c2433;
+  --card: #ffffff;
+  --popover: #ffffff;
+  --muted: #f1f4f9;
+  --muted-foreground: #55617a;
+  --faint: #8a93a8;
+  --sunken: #f7f9fc;
+  --primary: #0c8f60;
+  --primary-foreground: #ffffff;
+  --destructive: #d43f49;
+  --warning: #a86f0c;
+  --info: #1663b0;
+  --border: #d2dae7;
+  --input: #d2dae7;
+  --ring: #0c8f60;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--muted);
+  --color-accent-foreground: var(--foreground);
+  --color-faint: var(--faint);
+  --color-sunken: var(--sunken);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--muted);
+  --color-secondary-foreground: var(--foreground);
+  --color-destructive: var(--destructive);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --font-sans: 'Avenir Next', Avenir, Futura, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  /* The page never scrolls; every pane scrolls on its own. `clip`, not
+     `hidden`: a hidden box can still be scrolled by focus or scrollIntoView. */
+  html,
+  body,
+  #root {
+    @apply h-full overflow-clip;
+  }
+  body {
+    @apply bg-background text-foreground m-0 font-sans text-[13px] leading-normal antialiased select-none;
+  }
+}

@@ -4,7 +4,7 @@
 // matches the desktop the user already set up rather than forcing dark on
 // them. `light` and `dark` pin it regardless of the OS.
 //
-// Only the *resolved* value is ever written to the DOM — styles.css matches
+// Only the *resolved* value is ever written to the DOM — index.css matches
 // `body[data-theme='light']` and nothing else, so it never has to know a
 // preference existed.
 

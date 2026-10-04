@@ -204,6 +204,126 @@ fn walk_md(root: &Path, dir: &Path, out: &mut Vec<String>) -> Result<(), String>
     Ok(())
 }
 
+/// Image types a note may use as its icon or cover.
+const IMAGE_EXTS: [&str; 6] = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
+/// A cover is a picture, not a video: anything past this is refused.
+const MAX_ASSET_BYTES: u64 = 15 * 1024 * 1024;
+
+fn is_image(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| IMAGE_EXTS.contains(&e.to_ascii_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+/// Copy an image the user picked in the file dialog into the vault, so a
+/// note's cover or icon travels with the vault instead of pointing at a file
+/// somewhere else on the disk. Bytes only: the name comes from the frontend.
+fn import_asset(root: &Path, src: &Path, rel: &str) -> Result<(), String> {
+    let dest = resolve(root, rel)?;
+    if !is_image(src) || !is_image(&dest) {
+        return Err("only images can be imported".into());
+    }
+    let meta = fs::metadata(src).map_err(|e| e.to_string())?;
+    if !meta.is_file() || meta.len() > MAX_ASSET_BYTES {
+        return Err("not a file, or larger than 15 MB".into());
+    }
+    if dest.exists() {
+        return Err(format!("already exists: {rel}"));
+    }
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::copy(src, &dest).map(|_| ()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn import_vault_asset(
+    state: State<'_, VaultState>,
+    src: String,
+    rel: String,
+) -> Result<(), String> {
+    import_asset(&root(&state), Path::new(&src), &rel)
+}
+
+fn is_viewable(path: &Path) -> bool {
+    is_image(path)
+        || path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("pdf"))
+            .unwrap_or(false)
+}
+
+/// An image or PDF inside the vault, as raw bytes for the WebView to show.
+/// Nothing else: the WebView reads text through `read_vault_file`.
+#[tauri::command]
+pub fn read_vault_bytes(
+    state: State<'_, VaultState>,
+    rel: String,
+) -> Result<tauri::ipc::Response, String> {
+    let path = abs(&state, &rel)?;
+    if !is_viewable(&path) {
+        return Err("not an image or PDF".into());
+    }
+    fs::read(path)
+        .map(tauri::ipc::Response::new)
+        .map_err(|e| e.to_string())
+}
+
+/// Every file that is not a note, so the tree can show a vault as it is on
+/// disk. Dot entries (.obsidian, .assets, .DS_Store …) are tool state and left out.
+#[tauri::command]
+pub fn list_vault_files(state: State<'_, VaultState>) -> Result<Vec<String>, String> {
+    let root = root(&state);
+    let mut out = Vec::new();
+    walk_other(&root, &root, &mut out)?;
+    out.sort();
+    Ok(out)
+}
+
+fn walk_other(root: &Path, dir: &Path, out: &mut Vec<String>) -> Result<(), String> {
+    for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
+        if path.is_dir() {
+            walk_other(root, &path, out)?;
+        } else if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            let rel = path.strip_prefix(root).map_err(|e| e.to_string())?;
+            out.push(rel.to_string_lossy().into_owned());
+        }
+    }
+    Ok(())
+}
+
+/// Show a vault file in Finder / Explorer / the file manager. Reveal, never
+/// run: a vault can be a synced folder, and launching whatever file sits in
+/// it would make "open" mean "execute".
+#[tauri::command]
+pub fn reveal_vault_file(state: State<'_, VaultState>, rel: String) -> Result<(), String> {
+    let path = abs(&state, &rel)?;
+    if !path.exists() {
+        return Err(format!("not found: {rel}"));
+    }
+    let mut cmd = if cfg!(target_os = "macos") {
+        let mut c = std::process::Command::new("open");
+        c.arg("-R").arg(&path);
+        c
+    } else if cfg!(target_os = "windows") {
+        let mut c = std::process::Command::new("explorer");
+        c.arg(format!("/select,{}", path.display()));
+        c
+    } else {
+        let mut c = std::process::Command::new("xdg-open");
+        c.arg(path.parent().unwrap_or(&path));
+        c
+    };
+    cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn read_vault_file(state: State<'_, VaultState>, rel: String) -> Result<String, String> {
     fs::read_to_string(abs(&state, &rel)?).map_err(|e| e.to_string())
@@ -643,6 +763,51 @@ mod tests {
         let absolute = resolve(&root, "/etc/passwd").unwrap();
         assert!(absolute.starts_with(&root), "escaped: {absolute:?}");
         assert_eq!(absolute, root.join("etc/passwd"));
+    }
+
+    #[test]
+    fn lists_files_that_are_not_notes_and_skips_dot_entries() {
+        let root = tmp("other-files");
+        fs::create_dir_all(root.join("docs/.obsidian")).unwrap();
+        fs::create_dir_all(root.join(".assets")).unwrap();
+        for f in [
+            "docs/spec.pdf",
+            "docs/note.md",
+            "docs/sheet.xlsx",
+            "docs/.DS_Store",
+            "docs/.obsidian/app.json",
+            ".assets/c.png",
+        ] {
+            fs::write(root.join(f), b"x").unwrap();
+        }
+        let mut out = Vec::new();
+        walk_other(&root, &root, &mut out).unwrap();
+        out.sort();
+        assert_eq!(
+            out,
+            vec!["docs/sheet.xlsx".to_string(), "docs/spec.pdf".to_string()]
+        );
+        assert!(is_viewable(Path::new("a/B.PDF")));
+        assert!(!is_viewable(Path::new("a/b.xlsx")));
+    }
+
+    #[test]
+    fn import_copies_an_image_and_refuses_everything_else() {
+        let root = tmp("import");
+        let outside = tmp("import-src");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("cover.png"), b"png").unwrap();
+        fs::write(outside.join("notes.txt"), b"txt").unwrap();
+
+        import_asset(&root, &outside.join("cover.png"), ".assets/c.png").unwrap();
+        assert_eq!(fs::read(root.join(".assets/c.png")).unwrap(), b"png");
+
+        // Not an image, on either side.
+        assert!(import_asset(&root, &outside.join("notes.txt"), ".assets/n.png").is_err());
+        assert!(import_asset(&root, &outside.join("cover.png"), ".assets/c.md").is_err());
+        // Out of the vault, or over a file that is already there.
+        assert!(import_asset(&root, &outside.join("cover.png"), "../c.png").is_err());
+        assert!(import_asset(&root, &outside.join("cover.png"), ".assets/c.png").is_err());
     }
 
     #[test]

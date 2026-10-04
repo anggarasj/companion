@@ -5,13 +5,14 @@ import { openDatabase, type SqlDriver } from '@meetcc/store'
 import { createIndex, search, Vault, uuidV7, type VaultNote } from '@meetcc/vault'
 import { tauriVaultIo } from './vaultIo'
 import { t, formatDate, type LangPref } from '@meetcc/shared/i18n'
+import type { DocType } from '@meetcc/shared/types'
 import { loadLangPref } from './lang'
 import { DateField } from './DateField'
 import { MeetingMeta } from './MeetingMeta'
 import { Select, type Option, type Tone } from './Select'
 import { activeSponsorLinks } from './sponsor'
 import { NoteTree } from './NoteTree'
-import { saveTarget, settleSaved } from './saveTarget'
+import { docPath, saveTarget, settleSaved } from './saveTarget'
 import { loadAutosave } from './editorPrefs'
 import { drainSpool } from './spool'
 import { buildTree, folderPaths, withEmptyFolders } from './tree'
@@ -19,7 +20,47 @@ import { hideCopiedOriginals, inboxSearchResults, isIncomingMeeting } from './si
 import { loadThemePref, type ThemePref } from './theme'
 import { NoteEditor } from './NoteEditor'
 import UpdateBanner from './UpdateBanner'
-import { Button, SegmentedControl, TextInput, useToast } from '@meetcc/ui'
+import { AIComposer } from './AIComposer'
+import { CommandPalette, type PaletteCommand } from './CommandPalette'
+import { AISidebar } from './AISidebar'
+import { VaultList } from './VaultList'
+import { PageHeader } from './PageHeader'
+import { FileView, isPdf } from './FileView'
+import { PageMenu } from './PageMenu'
+import { loadPanes, savePanes, type Panes } from './panes'
+import { loadVaults, saveVaults, withCurrent, type VaultEntry } from './vaults'
+import type { Editor } from '@tiptap/core'
+import {
+  CircleAlert,
+  Coffee,
+  Copy,
+  FilePlus,
+  FolderOpen,
+  FolderPlus,
+  HardDrive,
+  Heart,
+  Library,
+  Monitor,
+  Moon,
+  PanelLeft,
+  PanelRight,
+  Save,
+  Search,
+  Settings,
+  Sparkles,
+  Sun,
+  TriangleAlert,
+  Users,
+  Video,
+  type LucideIcon,
+} from 'lucide-react'
+import { useToast } from './toast'
+import { cn } from '@/lib/utils'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Segmented } from '@/components/Segmented'
+import { Tip } from '@/components/Tip'
 import { emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { openSettingsWindow } from './openSettingsWindow'
@@ -37,7 +78,7 @@ import {
 /** The Companion mark from assets/brand/logo-mark.svg, inlined. */
 function BrandMark() {
   return (
-    <svg className="brand" viewBox="0 0 32 32" role="img" aria-label="Meet Companion">
+    <svg className="size-6 flex-none" viewBox="0 0 32 32" role="img" aria-label="Meet Companion">
       <rect width="32" height="32" rx="7" fill="#0a0a0a" />
       <path
         d="M10 7 H22 A4 4 0 0 1 26 11 V17 A4 4 0 0 1 22 21 H14.5 L10 25.5 V21 A4 4 0 0 1 6 17 V11 A4 4 0 0 1 10 7 Z"
@@ -48,6 +89,45 @@ function BrandMark() {
     </svg>
   )
 }
+
+function PaneButton({ on, label, onClick, icon: Icon }: { on: boolean; label: string; onClick: () => void; icon: LucideIcon }) {
+  return (
+    <Tip label={label}>
+      <button
+        type="button"
+        className={cn(
+          'grid h-6 w-[26px] place-items-center rounded-[5px] text-muted-foreground hover:bg-muted hover:text-foreground',
+          on && 'text-foreground',
+        )}
+        aria-pressed={on}
+        aria-label={label}
+        onClick={onClick}
+      >
+        <Icon className="size-4" />
+      </button>
+    </Tip>
+  )
+}
+
+/** Sponsor links carry a text glyph (sponsor.ts is shared with the extension); the desktop draws an icon instead. */
+const SPONSOR_ICON: Record<string, LucideIcon> = { github: Heart, saweria: Coffee }
+
+const KICKER = 'text-[11px] font-semibold uppercase leading-none tracking-widest text-muted-foreground'
+const COUNT = 'ml-auto text-xs tabular-nums text-muted-foreground'
+const HEAD_BTN =
+  'grid size-[26px] flex-none place-items-center rounded-md text-muted-foreground hover:text-primary disabled:cursor-default disabled:opacity-45'
+const LIST = 'm-0 min-h-0 min-w-0 flex-1 list-none overflow-y-auto overflow-x-hidden px-2 pb-3 pt-0'
+const EMPTY_HINT = 'p-2.5 text-[12.5px] leading-normal text-muted-foreground'
+const CRUMB = "truncate whitespace-nowrap before:mx-1.5 before:opacity-50 before:content-['/']"
+const BAR = 'mt-3 flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-xs'
+
+/** A row in the search results and the inbox: title over its metadata. */
+const noteItem = (active: boolean): string =>
+  cn(
+    'flex w-full min-w-0 flex-col gap-[3px] rounded-lg border border-transparent px-2.5 py-2 text-left text-foreground transition-colors hover:border-border hover:bg-muted',
+    active && 'border-input bg-muted shadow-[inset_3px_0_0_var(--primary)] hover:border-input',
+  )
+const NOTE_TITLE = 'truncate text-[13px] font-medium leading-snug text-foreground'
 
 interface NoteHeader {
   rel: string
@@ -76,6 +156,9 @@ const PLATFORM_LABELS: Record<string, string> = {
 function platformLabel(platform: string): string {
   return PLATFORM_LABELS[platform] ?? platform
 }
+
+/** Dot folders are tool state (.obsidian, .assets, .trash), not notes. */
+const hiddenPath = (p: string): boolean => p.split('/').some((part) => part.startsWith('.'))
 
 function dayOf(iso?: string): string {
   return iso ? iso.slice(0, 10) : ''
@@ -150,26 +233,30 @@ function TicketFields({
   onChange: (patch: Partial<VaultNote>) => void
 }) {
   const pick = (value: string): string | undefined => value || undefined
-  const [showEmpty, setShowEmpty] = useState(false)
 
-  // The partition is by value, not by field. A note is a markdown file someone
-  // can edit by hand, so a value can exist in the file without ever having been
-  // set here — hiding a set field would hide the only place it is visible.
-  // Empty ones are what goes away until asked for.
+  // Only properties the note already carries are shown. A note is a markdown
+  // file someone can edit by hand, so a value set in the file still appears
+  // here; an empty one stays out of the document view entirely.
   const set = {
     status: Boolean(note.status),
     priority: Boolean(note.priority),
     assignee: Boolean(note.assignee),
     due: Boolean(note.dueDate),
   }
-  const anyEmpty = Object.values(set).some((v) => !v)
-  const show = (field: keyof typeof set): boolean => set[field] || showEmpty
+  if (!Object.values(set).some(Boolean)) return null
+  const show = (field: keyof typeof set): boolean => set[field]
 
+  const field = 'flex min-w-0 flex-col gap-[5px]'
+  // Direct children only: the date field draws its own value in a nested span.
+  const caption = 'text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground'
+
+  // A grid, not a wrapping flex row: equal columns keep the controls the same
+  // width, and a shared height keeps their boxes on one baseline.
   return (
-    <div className="ticket-fields">
+    <div className="mb-3.5 grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-x-[18px] gap-y-2.5 border-b pb-3.5">
       {show('status') && (
-      <label>
-        <span>{t('desktop.field.status')}</span>
+      <label className={field}>
+        <span className={caption}>{t('desktop.field.status')}</span>
         <Select
           label={t('desktop.field.status')}
           value={note.status ?? ''}
@@ -179,8 +266,8 @@ function TicketFields({
       </label>
       )}
       {show('priority') && (
-      <label>
-        <span>{t('desktop.field.priority')}</span>
+      <label className={field}>
+        <span className={caption}>{t('desktop.field.priority')}</span>
         <Select
           label={t('desktop.field.priority')}
           value={note.priority ?? ''}
@@ -190,9 +277,10 @@ function TicketFields({
       </label>
       )}
       {show('assignee') && (
-      <label>
-        <span>{t('desktop.field.assignee')}</span>
-        <TextInput
+      <label className={field}>
+        <span className={caption}>{t('desktop.field.assignee')}</span>
+        <Input
+          className="h-[34px] w-full bg-sunken dark:bg-sunken"
           value={note.assignee ?? ''}
           placeholder={t('desktop.field.assigneePlaceholder')}
           onChange={(e) => onChange({ assignee: pick(e.target.value) })}
@@ -200,15 +288,10 @@ function TicketFields({
       </label>
       )}
       {show('due') && (
-      <label>
-        <span>{t('desktop.field.due')}</span>
+      <label className={field}>
+        <span className={caption}>{t('desktop.field.due')}</span>
         <DateField value={note.dueDate ?? ''} onChange={(v) => onChange({ dueDate: pick(v) })} />
       </label>
-      )}
-      {anyEmpty && (
-        <Button type="button"
-        className="add-property"
-        onClick={() => setShowEmpty((v) => !v)}>{showEmpty ? t('desktop.field.hideEmpty') : t('desktop.field.addProperty')}</Button>
       )}
     </div>
   )
@@ -262,6 +345,10 @@ export default function App() {
   // directory has no note path to be derived from, so it would vanish the
   // moment it was made.
   const [folders, setFolders] = useState<string[]>([])
+  // Files that are not notes (PDFs, images, office files …), for the tree.
+  const [otherFiles, setOtherFiles] = useState<string[]>([])
+  // A non-note file open in the main pane; exclusive with `note`.
+  const [viewing, setViewing] = useState<string | null>(null)
   // The folder a new folder is being named inside: null is "not naming", ''
   // is the vault root. Which parent it belongs to comes from the button that
   // was clicked, so nothing has to be asked afterwards.
@@ -282,6 +369,27 @@ export default function App() {
     run: () => Promise<void>
   }>(null)
   const driverRef = useRef<SqlDriver | null>(null)
+  // "Write with AI". `kind` pre-selects a document type, e.g. from a meeting.
+  const [composer, setComposer] = useState<null | { kind?: DocType }>(null)
+  const [palette, setPalette] = useState(false)
+  const [panes, setPanesState] = useState<Panes>(loadPanes)
+  const togglePane = (pane: keyof Panes) =>
+    setPanesState((p) => {
+      const next = { ...p, [pane]: !p[pane] }
+      savePanes(next)
+      return next
+    })
+  const aiPanel = panes.ai
+  const setAiPanel = (open: boolean) => panes.ai !== open && togglePane('ai')
+  const [vaults, setVaults] = useState<VaultEntry[]>(loadVaults)
+  const updateVaults = (next: VaultEntry[]) => {
+    setVaults(next)
+    saveVaults(next)
+  }
+  // The open note's live editor, published by NoteEditor for the AI panel.
+  const [liveEditor, setLiveEditor] = useState<Editor | null>(null)
+  // Window shortcuts read the current render through this.
+  const saveShortcutRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     let alive = true
@@ -385,6 +493,7 @@ export default function App() {
       }
     }
     await invoke<string[]>('list_vault_folders').then(setFolders).catch(() => undefined)
+    await invoke<string[]>('list_vault_files').then(setOtherFiles).catch(() => undefined)
   }
 
   // Notes also arrive from outside this window: the extension hands finished
@@ -447,7 +556,16 @@ export default function App() {
 
   async function open(rel: string) {
     if (!vault) return
+    if (!rel.toLowerCase().endsWith('.md')) {
+      setNote(null)
+      setSelected(null)
+      setDirty(false)
+      setViewing(rel)
+      setError(null)
+      return
+    }
     const n = await vault.readNote(rel)
+    setViewing(null)
     setSelected(rel)
     setTarget(null)
     setNote(n)
@@ -528,8 +646,6 @@ export default function App() {
   }
 
 
-  const moveNote = (folder: string) => (selected ? moveNoteFrom(selected, folder) : undefined)
-
   async function moveNoteFrom(from: string, folder: string) {
     if (!vault) return
     const file = from.split('/').pop() ?? from
@@ -565,6 +681,30 @@ export default function App() {
     setEditorKey((k) => k + 1)
     setDirty(false)
     setError(null)
+  }
+
+  /**
+   * A document written in one step (by AI) becomes a real file straight away,
+   * named after its title, never on top of an existing one — then opens. It
+   * is a plain `manual` note: no `source`, because that field means "edited
+   * copy of this meeting" and would hide the meeting from the Notes tab.
+   */
+  async function createDocument(title: string, body: string, folder: string): Promise<void> {
+    if (!vault) return
+    const fresh: VaultNote = {
+      id: uuidV7(),
+      sessionKey: `nota/${Date.now().toString(36)}`,
+      platform: 'manual',
+      updatedAt: new Date().toISOString(),
+      title,
+      body,
+    }
+    const rel = docPath(folder, title, notes.map((n) => n.rel))
+    await vault.writeNoteAt(rel, fresh)
+    await refresh(vault)
+    setComposer(null)
+    toast('success', t('desktop.composer.created', { path: rel }))
+    guard(() => open(rel))
   }
 
   /** Write the open note. `silent` is autosave: no toast unless a copy was made. */
@@ -681,7 +821,7 @@ export default function App() {
    * is repopulated from whatever the new folder holds.
    */
   /** Point the vault at `path`, rebuilding everything that captured the old root. */
-  async function applyRoot(path: string): Promise<void> {
+  async function applyRoot(path: string, message = t('desktop.toast.vaultMoved', { path })): Promise<void> {
     const next = new Vault({ io: tauriVaultIo(path) })
     setVault(next)
     setNote(null)
@@ -690,7 +830,23 @@ export default function App() {
     await refresh(next)
     void emitTo('settings', SETTINGS_VAULT_CHANGED_EVENT).catch(() => undefined)
     setError(null)
-    toast('success', t('desktop.toast.vaultMoved', { path }))
+    toast('success', message)
+  }
+
+  /** Switch to a listed vault. A folder that is gone is reported, never
+   *  recreated: `set_vault_root` would make an empty one in its place. */
+  async function openVault(entry: VaultEntry): Promise<void> {
+    try {
+      const probe = await invoke<{ exists: boolean }>('probe_vault_root', { path: entry.path })
+      if (!probe.exists) {
+        toast('error', t('desktop.vaults.missing', { path: entry.path }))
+        return
+      }
+      await invoke('set_vault_root', { path: entry.path })
+      await applyRoot(entry.path, t('desktop.vaults.opened', { name: entry.name }))
+    } catch (e) {
+      setError(String(e))
+    }
   }
 
   async function resetVault() {
@@ -702,6 +858,19 @@ export default function App() {
         await applyRoot(root)
       },
     })
+  }
+
+  /** "+" in the vault list: the folder picked in the dialog opens at once —
+   *  choosing it there is the decision, so no second confirmation. */
+  async function addVault(): Promise<void> {
+    try {
+      const picked = await openDialog({ directory: true, title: t('desktop.vaults.add') })
+      if (typeof picked !== 'string') return
+      await invoke('set_vault_root', { path: picked })
+      await applyRoot(picked, t('desktop.vaults.opened', { name: picked.replace(/\/+$/, '').split('/').pop() ?? picked }))
+    } catch (e) {
+      setError(String(e))
+    }
   }
 
   async function moveVault() {
@@ -743,6 +912,44 @@ export default function App() {
         toast('error', String(error))
       })
   }
+
+  // Whatever is open is listed: the first launch, a vault picked in Settings,
+  // or one chosen with "+" all end up here.
+  const openRoot = vault?.io.root
+  useEffect(() => {
+    if (!openRoot) return
+    setVaults((list) => {
+      const next = withCurrent(list, openRoot)
+      if (next !== list) saveVaults(next)
+      return next
+    })
+  }, [openRoot])
+
+  saveShortcutRef.current = () => {
+    if (noteRef.current) void save()
+  }
+
+  // Window shortcuts. Cmd+B is bold inside the editor, so it only toggles the
+  // sidebar from outside it; Cmd+\ toggles it from anywhere.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return
+      const key = e.key.toLowerCase()
+      const inEditor = Boolean((e.target as HTMLElement | null)?.closest?.('.ProseMirror'))
+      if (key === 'k' || key === 'p') {
+        e.preventDefault()
+        setPalette((open) => !open)
+      } else if (key === 's') {
+        e.preventDefault()
+        saveShortcutRef.current()
+      } else if (key === '\\' || (key === 'b' && !inEditor)) {
+        e.preventDefault()
+        togglePane('files')
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   const filtered = useMemo(() => {
     if (!query.trim()) return notes
@@ -793,16 +1000,23 @@ export default function App() {
   const tree = useMemo(
     () =>
       withEmptyFolders(
-        buildTree(notesTab.map((n) => ({
-          rel: n.rel,
-          title: n.title,
-          platform: n.platform,
-          source: n.platform && n.platform !== 'manual' ? platformLabel(n.platform) : undefined,
-          updatedAt: n.updatedAt,
-        }))),
-        folders,
+        buildTree([
+          ...notesTab.filter((n) => !hiddenPath(n.rel)).map((n) => ({
+            rel: n.rel,
+            title: n.title,
+            platform: n.platform,
+            source: n.platform && n.platform !== 'manual' ? platformLabel(n.platform) : undefined,
+            updatedAt: n.updatedAt,
+          })),
+          ...otherFiles.map((rel) => ({
+            rel,
+            title: rel.split('/').pop() ?? rel,
+            kind: isPdf(rel) ? ('pdf' as const) : ('file' as const),
+          })),
+        ]),
+        folders.filter((f) => !hiddenPath(f)),
       ),
-    [notesTab, folders],
+    [notesTab, folders, otherFiles],
   )
 
   // Notes the extension delivered, as opposed to ones written here. The split
@@ -820,6 +1034,38 @@ export default function App() {
     [query, incoming, filtered],
   )
 
+  const searchBodies = (q: string): string[] => {
+    if (!driver) return []
+    try {
+      return search(driver, q.trim().toLowerCase()).map((h) => h.path)
+    } catch {
+      return [] // a query FTS cannot parse still matches titles
+    }
+  }
+
+  const paletteCommands: PaletteCommand[] = [
+    { id: 'new', label: t('desktop.vault.newNote'), run: () => guard(openNew) },
+    { id: 'ai', label: t('desktop.ai.writeWithAI'), hint: '✦', run: () => setComposer({}) },
+    ...(note && isIncomingMeeting(note)
+      ? [{ id: 'meeting-doc', label: t('desktop.composer.fromMeeting'), hint: '✦', run: () => setComposer({ kind: 'prd' as const }) }]
+      : []),
+    {
+      id: 'folder',
+      label: t('desktop.vault.newFolder'),
+      run: () => {
+        if (!panes.files) togglePane('files')
+        setView('notes')
+        setNamingFolder('')
+      },
+    },
+    { id: 'ai-panel', label: t('desktop.panes.ai'), hint: '✦', run: () => togglePane('ai') },
+    { id: 'sidebar', label: t('desktop.panes.files'), hint: '⌘\\', run: () => togglePane('files') },
+    { id: 'vaults', label: t('desktop.panes.vaults'), run: () => togglePane('vaults') },
+    { id: 'settings', label: t('desktop.nav.settings'), run: () => void showSettingsWindow() },
+  ]
+
+  const ThemeIcon = themePref === 'system' ? Monitor : themePref === 'light' ? Sun : Moon
+
   async function showSettingsWindow(): Promise<void> {
     if (settingsWindowOpeningRef.current) return
     settingsWindowOpeningRef.current = true
@@ -833,236 +1079,386 @@ export default function App() {
   }
 
   return (
-    <div className="shell">
+    <div className="flex h-full min-w-0">
       <UpdateBanner />
-      <aside className="sidebar" aria-label={t('desktop.nav.notes')}>
-        <div className="sidebar-top">
-          <div className="sidebar-brand">
+      {/* Two left columns, Zed-style: which vault, then what is in it. */}
+      {panes.vaults && (
+        <aside
+          className="flex w-[200px] min-w-[160px] max-w-[280px] flex-none resize-x flex-col gap-3.5 overflow-y-auto overflow-x-hidden border-r bg-card px-2.5 py-3.5"
+          aria-label={t('desktop.vaults.title')}
+        >
+          <div className="flex items-center gap-[9px] px-0.5 pb-0.5">
             <BrandMark />
-            <span className="sidebar-brand-name">Companion</span>
+            <span className="min-w-0 flex-1 truncate text-xs font-semibold uppercase tracking-[0.12em]">Companion</span>
           </div>
-          <div className="sidebar-search">
-            <span className="sidebar-search-icon" aria-hidden="true">⌕</span>
-            <TextInput
-              type="search"
-              className="sidebar-search-input"
-              placeholder={
-                !vault
-                  ? t('desktop.vault.preparing')
-                  : view === 'inbox'
-                    ? t('desktop.inbox.search')
-                    : indexDown
-                      ? t('desktop.vault.searchTitlesOnly')
-                      : t('desktop.vault.search')
-              }
-              aria-label={view === 'inbox' ? t('desktop.inbox.search') : t('desktop.vault.search')}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              disabled={!vault}
-            />
+          <VaultList
+            vaults={vaults}
+            root={vault?.io.root}
+            onOpen={(entry) => guard(() => openVault(entry))}
+            onAdd={() => guard(addVault)}
+            onChange={updateVaults}
+          />
+        </aside>
+      )}
+      {panes.files && (
+        // Resizable, but bounded beside the editor.
+        <aside
+          className="flex min-h-0 w-[276px] min-w-[240px] max-w-[340px] flex-none resize-x flex-col overflow-hidden border-r bg-card"
+          aria-label={t('desktop.nav.notes')}
+        >
+          <div className="flex flex-none flex-col gap-2 border-b px-3 pb-2.5 pt-3.5">
+            <div className="flex items-center gap-2 rounded-lg border bg-muted px-2.5 focus-within:border-primary">
+              <Search className="size-3.5 flex-none text-faint" aria-hidden="true" />
+              <input
+                type="search"
+                className="w-full min-w-0 flex-1 bg-transparent py-[7px] text-[13px] text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-45"
+                placeholder={
+                  !vault
+                    ? t('desktop.vault.preparing')
+                    : view === 'inbox'
+                      ? t('desktop.inbox.search')
+                      : indexDown
+                        ? t('desktop.vault.searchTitlesOnly')
+                        : t('desktop.vault.search')
+                }
+                aria-label={view === 'inbox' ? t('desktop.inbox.search') : t('desktop.vault.search')}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                disabled={!vault}
+              />
+            </div>
+            <nav className="w-full">
+              <Segmented
+                ariaLabel={t('desktop.sidebar.tabs')}
+                className="grid w-full grid-cols-2 gap-0.5 rounded-[9px] border bg-muted p-[3px]"
+                itemClassName="h-auto min-w-0 overflow-hidden rounded-md border-transparent px-[5px] py-[7px] text-[11.5px]"
+                options={[
+                  { value: 'notes', label: t('desktop.nav.notes') },
+                  { value: 'inbox', label: t('desktop.nav.inbox') },
+                ]}
+                value={view}
+                onChange={(value) => setView(value as 'notes' | 'inbox')}
+              />
+            </nav>
           </div>
-          <nav className="sidebar-tabs">
-            <SegmentedControl
-              ariaLabel={t('desktop.sidebar.tabs')}
-              role="tablist"
-              options={[
-                { value: 'notes', label: t('desktop.nav.notes') },
-                { value: 'inbox', label: t('desktop.nav.inbox') },
-              ]}
-              value={view}
-              onChange={(value) => setView(value as 'notes' | 'inbox')}
-            />
-          </nav>
-        </div>
 
-        <div className="sidebar-scroll">
-          {view === 'notes' && (
-            <>
-              <div className="sidebar-list-head">
-                <span className="kicker">{t('desktop.vault.kicker')}</span>
-                <span className="count">{t('desktop.vault.count', { count: notesTab.length })}</span>
-                <span className="tip-wrap" data-tip={t('desktop.vault.newFolder')}>
-                  <Button
-                    type="button"
-                    className="add-btn"
-                    onClick={() => setNamingFolder('')}
-                    aria-label={t('desktop.vault.newFolder')}
-                    disabled={!vault}
-                  >
-                    ⊞
-                  </Button>
-                </span>
-                <span
-                  className="tip-wrap"
-                  data-tip={vault ? t('desktop.vault.newNote') : t('desktop.vault.preparing')}
-                >
-                  <Button
-                    type="button"
-                    className="add-btn"
-                    onClick={() => guard(openNew)}
-                    aria-label={t('desktop.vault.newNote')}
-                    disabled={!vault}
-                  >
-                    ＋
-                  </Button>
-                </span>
-              </div>
-              {namingFolder !== null && (
-                <TextInput
-                  className="search"
-                  autoFocus
-                  placeholder={
-                    namingFolder
-                      ? t('desktop.vault.folderNameIn', { folder: namingFolder })
-                      : t('desktop.vault.folderName')
-                  }
-                  aria-label={t('desktop.vault.folderName')}
-                  onBlur={(e) => void createFolder(namingFolder, e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') void createFolder(namingFolder, e.currentTarget.value)
-                    if (e.key === 'Escape') setNamingFolder(null)
-                  }}
-                />
-              )}
-              {!query.trim() ? (
-                <>
-                  <NoteTree
-                    root={tree}
-                    selected={selected}
-                    onOpen={(rel) => guard(() => open(rel))}
-                    onMove={(rel, folder) => void moveNoteFrom(rel, folder)}
-                    onAddFolder={(folder) => setNamingFolder(folder)}
-                    onRenameFolder={(folder, name) => guard(() => renameFolder(folder, name))}
-                    onTrashFolder={requestTrashFolder}
+          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-2.5 py-3">
+            {view === 'notes' && (
+              <>
+                <div className="flex flex-none items-center gap-2 border-b px-1 pb-2">
+                  <span className={KICKER}>{t('desktop.vault.kicker')}</span>
+                  <span className={COUNT}>{t('desktop.vault.count', { count: notesTab.length })}</span>
+                  {/* A disabled control gets no hover events, so the tip sits on a wrapper. */}
+                  <Tip label={t('desktop.ai.writeWithAI')}>
+                    <span className="inline-flex">
+                      <button
+                        type="button"
+                        className={cn(HEAD_BTN, 'text-primary')}
+                        onClick={() => setComposer({})}
+                        aria-label={t('desktop.ai.writeWithAI')}
+                        disabled={!vault}
+                      >
+                        <Sparkles className="size-4" />
+                      </button>
+                    </span>
+                  </Tip>
+                  <Tip label={t('desktop.vault.newFolder')}>
+                    <span className="inline-flex">
+                      <button
+                        type="button"
+                        className={HEAD_BTN}
+                        onClick={() => setNamingFolder('')}
+                        aria-label={t('desktop.vault.newFolder')}
+                        disabled={!vault}
+                      >
+                        <FolderPlus className="size-4" />
+                      </button>
+                    </span>
+                  </Tip>
+                  <Tip label={vault ? t('desktop.vault.newNote') : t('desktop.vault.preparing')}>
+                    <span className="inline-flex">
+                      <button
+                        type="button"
+                        className={HEAD_BTN}
+                        onClick={() => guard(openNew)}
+                        aria-label={t('desktop.vault.newNote')}
+                        disabled={!vault}
+                      >
+                        <FilePlus className="size-4" />
+                      </button>
+                    </span>
+                  </Tip>
+                </div>
+                {namingFolder !== null && (
+                  <Input
+                    className="h-8 flex-none"
+                    autoFocus
+                    placeholder={
+                      namingFolder
+                        ? t('desktop.vault.folderNameIn', { folder: namingFolder })
+                        : t('desktop.vault.folderName')
+                    }
+                    aria-label={t('desktop.vault.folderName')}
+                    onBlur={(e) => void createFolder(namingFolder, e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') void createFolder(namingFolder, e.currentTarget.value)
+                      if (e.key === 'Escape') setNamingFolder(null)
+                    }}
                   />
-                </>
-              ) : (
-                <ul className="note-list">
-                  {notesTabResults.map((n) => (
-                    <li key={n.rel || n.title}>
-                      {n.rel ? (
-                        <Button
-                          type="button"
-                          className={selected === n.rel ? 'note-item active' : 'note-item'}
-                          onClick={() => guard(() => open(n.rel))}
-                        >
-                          <span className="note-title">{n.title}</span>
-                          <span className="note-row-meta">
-                            {n.platform && n.platform !== 'manual' && (
-                              <span className="note-source">{platformLabel(n.platform)}</span>
-                            )}
-                            <span className="note-date">{dayOf(n.updatedAt)}</span>
+                )}
+                {!query.trim() ? (
+                  <>
+                    <NoteTree
+                      root={tree}
+                      selected={viewing ?? selected}
+                      onOpen={(rel) => guard(() => open(rel))}
+                      onMove={(rel, folder) => void moveNoteFrom(rel, folder)}
+                      onAddFolder={(folder) => setNamingFolder(folder)}
+                      onRenameFolder={(folder, name) => guard(() => renameFolder(folder, name))}
+                      onTrashFolder={requestTrashFolder}
+                    />
+                  </>
+                ) : (
+                  <ul className={LIST}>
+                    {notesTabResults.map((n) => (
+                      <li key={n.rel || n.title}>
+                        {n.rel ? (
+                          <button
+                            type="button"
+                            className={noteItem(selected === n.rel)}
+                            onClick={() => guard(() => open(n.rel))}
+                          >
+                            <span className={NOTE_TITLE}>{n.title}</span>
+                            <span className="flex min-w-0 max-w-full items-center gap-1.5 overflow-hidden">
+                              {n.platform && n.platform !== 'manual' && (
+                                <span
+                                  className={cn(
+                                    'max-w-1/2 truncate rounded-sm border px-[5px] py-px text-[10px] font-medium leading-snug tracking-wide text-muted-foreground',
+                                    selected === n.rel && 'border-primary text-primary',
+                                  )}
+                                >
+                                  {platformLabel(n.platform)}
+                                </span>
+                              )}
+                              <span className="ml-auto min-w-0 flex-1 truncate text-right text-[11px] leading-snug text-muted-foreground">
+                                {dayOf(n.updatedAt)}
+                              </span>
+                            </span>
+                          </button>
+                        ) : (
+                          <Tip label={t('desktop.vault.bodyHit')}>
+                            <span className="block cursor-default truncate px-[9px] py-[7px] text-[13px] text-muted-foreground">
+                              {n.title}
+                            </span>
+                          </Tip>
+                        )}
+                      </li>
+                    ))}
+                    {notesTabResults.length === 0 && <li className={EMPTY_HINT}>{t('desktop.vault.noMatches')}</li>}
+                  </ul>
+                )}
+              </>
+            )}
+            {view === 'inbox' && (
+              <>
+                <div className="flex flex-none items-center gap-2 border-b px-1 pb-2">
+                  <span className={KICKER}>{t('desktop.inbox.kicker')}</span>
+                  <span className={COUNT}>
+                    {t('desktop.inbox.count', {
+                      count: query.trim() ? filteredIncoming.length : incoming.length,
+                    })}
+                  </span>
+                </div>
+                <ul className={LIST}>
+                  {filteredIncoming.map((n) => (
+                    <li key={n.rel}>
+                      {/* One row per delivered meeting: where it came from,
+                          when, how many people, and whether the summary has
+                          landed yet. */}
+                      <button
+                        type="button"
+                        className={noteItem(selected === n.rel)}
+                        onClick={() => guard(() => open(n.rel))}
+                      >
+                        <span className={NOTE_TITLE}>{n.title}</span>
+                        <span className="flex flex-wrap items-center gap-2 font-mono text-[9.5px] leading-snug text-muted-foreground">
+                          <span className="flex items-center gap-1">
+                            <Video className="size-3" aria-hidden="true" />
+                            {platformLabel(n.platform)}
                           </span>
-                        </Button>
-                      ) : (
-                        <span className="note-title muted" data-tip={t('desktop.vault.bodyHit')}>
-                          {n.title}
+                          <span>{dayOf(n.startedAt) || dayOf(n.updatedAt)}</span>
+                          {n.participants > 0 && (
+                            <span className="flex items-center gap-1">
+                              <Users className="size-3" aria-hidden="true" />
+                              {t('desktop.inbox.participants', { count: n.participants })}
+                            </span>
+                          )}
+                          {!n.hasBody && <span className="text-primary opacity-75">{t('desktop.inbox.transcriptOnly')}</span>}
                         </span>
-                      )}
+                      </button>
                     </li>
                   ))}
-                  {notesTabResults.length === 0 && <li className="empty-hint">{t('desktop.vault.noMatches')}</li>}
+                  {filteredIncoming.length === 0 && (
+                    <li className={EMPTY_HINT}>
+                      {t(query.trim() ? 'desktop.inbox.noMatches' : 'desktop.inbox.empty')}
+                    </li>
+                  )}
                 </ul>
-              )}
-            </>
-          )}
-          {view === 'inbox' && (
-            <>
-              <div className="sidebar-list-head">
-                <span className="kicker">{t('desktop.inbox.kicker')}</span>
-                <span className="count">
-                  {t('desktop.inbox.count', {
-                    count: query.trim() ? filteredIncoming.length : incoming.length,
-                  })}
-                </span>
-              </div>
-              <ul className="note-list">
-                {filteredIncoming.map((n) => (
-                  <li key={n.rel}>
-                    <Button
-                      type="button"
-                      className={selected === n.rel ? 'note-item active' : 'note-item'}
-                      onClick={() => guard(() => open(n.rel))}
-                    >
-                      <span className="note-title">{n.title}</span>
-                      <span className="inbox-meta">
-                        <span>{platformLabel(n.platform)}</span>
-                        <span>{dayOf(n.startedAt) || dayOf(n.updatedAt)}</span>
-                        {n.participants > 0 && (
-                          <span>{t('desktop.inbox.participants', { count: n.participants })}</span>
-                        )}
-                        {!n.hasBody && <span className="pending">{t('desktop.inbox.transcriptOnly')}</span>}
-                      </span>
-                    </Button>
-                  </li>
-                ))}
-                {filteredIncoming.length === 0 && (
-                  <li className="empty-hint">
-                    {t(query.trim() ? 'desktop.inbox.noMatches' : 'desktop.inbox.empty')}
-                  </li>
-                )}
-              </ul>
-            </>
-          )}
-        </div>
-
-        <div className="sidebar-bottom">
-          <div className="sidebar-foot">
-            <Button
-              type="button"
-              className="sidebar-support-btn"
-              aria-label={t('desktop.nav.theme', { mode: themeLabel(themePref) })}
-              data-tip={t('desktop.nav.theme', { mode: themeLabel(themePref) })}
-              onClick={() => {
-                const next = themePref === 'system' ? 'light' : themePref === 'light' ? 'dark' : 'system'
-                setThemePref(next)
-                void emitTo('settings', SETTINGS_PREFERENCES_EVENT, { themePref: next }).catch(() => undefined)
-              }}
-            >
-              {themePref === 'system' ? '◐' : themePref === 'light' ? '☀' : '☾'}
-            </Button>
-            <Button
-              type="button"
-              className="sidebar-support-btn"
-              aria-label={t('desktop.nav.settings')}
-              data-tip={t('desktop.nav.settings')}
-              onClick={() => void showSettingsWindow()}
-            >
-              ⚙
-            </Button>
-            <span className="sidebar-foot-spacer" />
-            {activeSponsorLinks().map((link) => (
-              <Button
-                key={link.id}
-                type="button"
-                className="sidebar-support-btn"
-                aria-label={`${t('sponsor.title')} · ${t(link.label)}`}
-                data-tip={`${t('sponsor.title')} · ${t(link.label)}`}
-                onClick={() => void invoke('open_external', { url: link.url })}
-              >
-                {link.icon}
-              </Button>
-            ))}
+              </>
+            )}
           </div>
-        </div>
-      </aside>
 
-      <main className="content">
-        <header className="topbar">
-          <span className="vault">{vault?.io.root ?? '…'}</span>
+          <div className="flex flex-none items-center gap-1.5 border-t bg-card px-3 pb-3 pt-2.5">
+            <Tip label={t('desktop.nav.theme', { mode: themeLabel(themePref) })} side="top">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="text-muted-foreground"
+                aria-label={t('desktop.nav.theme', { mode: themeLabel(themePref) })}
+                onClick={() => {
+                  const next = themePref === 'system' ? 'light' : themePref === 'light' ? 'dark' : 'system'
+                  setThemePref(next)
+                  void emitTo('settings', SETTINGS_PREFERENCES_EVENT, { themePref: next }).catch(() => undefined)
+                }}
+              >
+                <ThemeIcon />
+              </Button>
+            </Tip>
+            <Tip label={t('desktop.nav.settings')} side="top">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="text-muted-foreground"
+                aria-label={t('desktop.nav.settings')}
+                onClick={() => void showSettingsWindow()}
+              >
+                <Settings />
+              </Button>
+            </Tip>
+            <span className="flex-1" />
+            {activeSponsorLinks().map((link) => {
+              const Icon = SPONSOR_ICON[link.id]
+              return (
+                <Tip key={link.id} label={`${t('sponsor.title')} · ${t(link.label)}`} side="top">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="text-muted-foreground"
+                    aria-label={`${t('sponsor.title')} · ${t(link.label)}`}
+                    onClick={() => void invoke('open_external', { url: link.url })}
+                  >
+                    {Icon ? <Icon /> : link.icon}
+                  </Button>
+                </Tip>
+              )
+            })}
+          </div>
+        </aside>
+
+      )}
+
+      <main className="flex min-w-0 flex-1 flex-col bg-background">
+        <header className="flex h-[38px] flex-none items-center gap-3 border-b bg-sunken px-3.5">
+          <span className="mr-1 flex gap-0.5">
+            <PaneButton on={panes.vaults} label={t('desktop.panes.vaults')} onClick={() => togglePane('vaults')} icon={Library} />
+            <PaneButton on={panes.files} label={t('desktop.panes.files')} onClick={() => togglePane('files')} icon={PanelLeft} />
+          </span>
+          <nav className="flex min-w-0 flex-1 items-center overflow-hidden text-[12.5px] text-muted-foreground" aria-label={t('desktop.breadcrumb')}>
+            <Tip label={vault?.io.root ?? '…'}>
+              <span className="flex items-center gap-1.5 truncate">
+                <FolderOpen className="size-3.5 flex-none" aria-hidden="true" />
+                {vault?.io.root.replace(/\/+$/, '').split('/').pop() ?? '…'}
+              </span>
+            </Tip>
+            {(selected ?? (target ? `${target}/_` : ''))
+              .split('/')
+              .slice(0, -1)
+              .map((part, i) => (
+                <span key={i} className={CRUMB}>
+                  {part}
+                </span>
+              ))}
+            {note && <span className={cn(CRUMB, 'text-foreground')}>{note.title || t('desktop.composer.untitled')}</span>}
+          </nav>
           {note && (
-            <span className="badge" data-tip={t('desktop.badge.local')}>
-              LOKAL
+            // Notion's "Edited just now": quiet unless unsaved.
+            <span className={cn('ml-auto whitespace-nowrap text-xs text-muted-foreground', dirty && !autosave && 'text-warning')}>
+              {dirty
+                ? autosave
+                  ? t('desktop.editor.saving')
+                  : t('desktop.editor.unsaved')
+                : t('desktop.editor.updated', { date: formatDate(note.updatedAt) || '—' })}
             </span>
           )}
+          {note && (
+            <Tip label={t('desktop.badge.local')}>
+              <Badge className="gap-1.5 rounded-full border-primary/40 bg-primary/12 px-[9px] py-[5px] font-mono text-[9px] font-bold leading-none tracking-[0.12em] text-primary">
+                <HardDrive className="size-2.5!" aria-hidden="true" />
+                LOKAL
+              </Badge>
+            </Tip>
+          )}
+          {(note || viewing) && (
+            <PageMenu
+              actions={[
+                ...((selected ?? viewing)
+                  ? [
+                      {
+                        id: 'reveal',
+                        label: t('desktop.file.reveal'),
+                        run: () => void invoke('reveal_vault_file', { rel: selected ?? viewing }).catch((e) => setError(String(e))),
+                      },
+                    ]
+                  : []),
+                ...(note ? [{ id: 'trash', label: t('desktop.editor.trash'), danger: true, run: trash }] : []),
+              ]}
+            />
+          )}
+          <Tip label={t('desktop.panes.ai')}>
+            <button
+              type="button"
+              className={cn(
+                'inline-flex h-6 items-center gap-[5px] rounded-md border px-[9px] text-xs text-muted-foreground hover:bg-muted hover:text-foreground',
+                aiPanel && 'bg-muted text-foreground',
+              )}
+              aria-pressed={aiPanel}
+              aria-label={t('desktop.panes.ai')}
+              onClick={() => togglePane('ai')}
+            >
+              <Sparkles className="size-3.5 text-primary" aria-hidden="true" /> {t('desktop.aiPanel.toggle')}
+              <PanelRight className="ml-0.5 size-3.5" aria-hidden="true" />
+            </button>
+          </Tip>
         </header>
 
-        <section className="editor-wrap">
-          {note ? (
+        <section
+          className={cn(
+            'flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto px-10 py-7 *:mx-auto *:w-full *:max-w-[780px]',
+            // A PDF or image fills the pane.
+            viewing && 'overflow-hidden p-0 *:max-w-none',
+          )}
+        >
+          {viewing ? (
+            <FileView rel={viewing} onError={setError} />
+          ) : note ? (
             <>
-              <TextInput
+              <PageHeader
+                note={note}
+                onChange={(patch) => {
+                  setNote({ ...note, ...patch })
+                  setDirty(true)
+                }}
+                onError={(message) => setError(message)}
+              />
+              {/* The title is text on the page, not a form field: no frame,
+                  no fill, no focus ring — the caret is the only sign it is
+                  being edited, as in Notion. */}
+              <input
                 ref={titleRef}
-                className="title-input"
+                className="mb-3.5 border-0 bg-transparent p-0 text-[34px] font-bold leading-[1.2] tracking-[-0.02em] text-foreground outline-none placeholder:text-muted-foreground/50"
                 value={note.title}
                 placeholder={t('desktop.editor.titlePlaceholder')}
                 onChange={(e) => {
@@ -1071,7 +1467,14 @@ export default function App() {
                 }}
               />
               {isIncomingMeeting(note) && (
-                <MeetingMeta note={note} vault={vault} />
+                <>
+                  <MeetingMeta note={note} vault={vault} />
+                  <div className="-mt-1.5 mb-3.5">
+                    <Button type="button" variant="outline" size="sm" onClick={() => setComposer({ kind: 'prd' })}>
+                      <Sparkles className="text-primary" /> {t('desktop.composer.fromMeeting')}
+                    </Button>
+                  </div>
+                </>
               )}
               <TicketFields note={note} onChange={(patch) => { setNote({ ...note, ...patch }); setDirty(true) }} />
               {/* Keyed by which note was opened, not its id or path: the
@@ -1086,62 +1489,49 @@ export default function App() {
                   setNote({ ...note, body })
                   setDirty(true)
                 }}
+                onWriteWithAI={() => setComposer({})}
+                onEditor={setLiveEditor}
               />
-              <div className="editor-actions">
-                <span className="meta">
-                  {dirty
-                    ? autosave
-                      ? t('desktop.editor.saving')
-                      : t('desktop.editor.unsaved')
-                    : t('desktop.editor.updated', {
-                        date: formatDate(note.updatedAt) || '—',
-                      })}
-                </span>
-                {/* A saved note moves its file; an unsaved one only records
-                    where the first save should land — until then there is no
-                    file to move. Same control either way, because "which
-                    folder is this in" is the same question. */}
-                <Select
-                  label={selected ? t('desktop.vault.moveTo') : t('desktop.vault.saveTo')}
-                  value={selected ? selected.split('/').slice(0, -1).join('/') : (target ?? '')}
-                  options={[
-                    { value: '', label: t('desktop.vault.rootFolder') },
-                    ...folderPaths(tree).map((p) => ({ value: p, label: p })),
-                  ]}
-                  onChange={(v) => (selected ? void moveNote(v) : setTarget(v))}
-                />
-                <Button type="button" variant="danger" onClick={trash}>
-                  {t('desktop.editor.trash')}
-                </Button>
-                {/* The label says what the button does: for a delivered
-                    meeting it never overwrites the archive, it makes the note
-                    you go on editing. Removing Save here would leave no way to
-                    act on a meeting at all. */}
-                <Button type="button" variant="primary" onClick={() => void save()}>
-                  {note.platform && note.platform !== 'manual'
-                    ? t('desktop.editor.saveCopy')
-                    : t('desktop.editor.save')}
-                </Button>
-              </div>
+              {/* Saving is automatic; a button only appears for someone who
+                  turned autosave off in Settings. For a delivered meeting it
+                  says what it does — it makes a copy, the archive stays. */}
+              {!autosave && (
+                <div className="mt-3.5 flex items-center gap-2.5">
+                  <Button type="button" size="sm" onClick={() => void save()}>
+                    {note.platform && note.platform !== 'manual' ? <Copy /> : <Save />}
+                    {note.platform && note.platform !== 'manual'
+                      ? t('desktop.editor.saveCopy')
+                      : t('desktop.editor.save')}
+                  </Button>
+                </div>
+              )}
             </>
           ) : (
-            <div className="empty">
-              <h1>{t('desktop.editor.emptyTitle')}</h1>
-              <p>{t('desktop.editor.emptyBody')}</p>
-              <Button type="button" variant="primary" onClick={() => guard(openNew)} disabled={!vault}>
-                {t('desktop.vault.newNote')}
-              </Button>
+            <div className="flex flex-1 flex-col items-center justify-center gap-1.5 text-center">
+              <h1 className="m-0 text-[26px] font-semibold">{t('desktop.editor.emptyTitle')}</h1>
+              <p className="m-0 max-w-[46ch] text-muted-foreground">{t('desktop.editor.emptyBody')}</p>
+              <div className="mt-2 flex gap-2">
+                <Button type="button" size="sm" onClick={() => guard(openNew)} disabled={!vault}>
+                  <FilePlus />
+                  {t('desktop.vault.newNote')}
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={() => setComposer({})} disabled={!vault}>
+                  <Sparkles className="text-primary" /> {t('desktop.ai.writeWithAI')}
+                </Button>
+              </div>
+              <p className="mt-1.5 text-xs text-muted-foreground">{t('desktop.palette.hint')}</p>
             </div>
           )}
           {confirm && (
-            <div className="confirm-bar" role="alert">
-              <span>{confirm.message}</span>
-              <Button type="button" onClick={() => setConfirm(null)}>
+            <div className={cn(BAR, 'border-warning bg-warning/10 text-foreground')} role="alert">
+              <TriangleAlert className="size-4 flex-none text-warning" aria-hidden="true" />
+              <span className="flex-1">{confirm.message}</span>
+              <Button type="button" variant="outline" size="sm" onClick={() => setConfirm(null)}>
                 {t('desktop.settings.cancel')}
               </Button>
               <Button
                 type="button"
-                variant="primary"
+                size="sm"
                 onClick={() => {
                   const action = confirm.run
                   setConfirm(null)
@@ -1153,19 +1543,54 @@ export default function App() {
             </div>
           )}
           {pending && (
-            <div className="confirm-bar" role="alert">
-              <span>{t('desktop.editor.confirmUnsaved')}</span>
-              <Button type="button" onClick={() => void resume(true)}>
+            <div className={cn(BAR, 'border-warning bg-warning/10 text-foreground')} role="alert">
+              <TriangleAlert className="size-4 flex-none text-warning" aria-hidden="true" />
+              <span className="flex-1">{t('desktop.editor.confirmUnsaved')}</span>
+              <Button type="button" variant="outline" size="sm" onClick={() => void resume(true)}>
                 {t('desktop.editor.discard')}
               </Button>
-              <Button type="button" variant="primary" onClick={() => void resume(false)}>
+              <Button type="button" size="sm" onClick={() => void resume(false)}>
                 {t('desktop.editor.saveAndGo')}
               </Button>
             </div>
           )}
-          {error && <div className="error-bar">{error}</div>}
+          {error && (
+            <div className={cn(BAR, 'items-start border-destructive bg-destructive/10 font-mono leading-snug text-destructive')}>
+              <CircleAlert className="size-4 flex-none" aria-hidden="true" />
+              {error}
+            </div>
+          )}
         </section>
       </main>
+      {aiPanel && (
+        <AISidebar
+          editor={note ? liveEditor : null}
+          docTitle={note?.title ?? ''}
+          onClose={() => setAiPanel(false)}
+          onWriteWithAI={() => setComposer({})}
+        />
+      )}
+      {composer && vault && (
+        <AIComposer
+          vault={vault}
+          folders={folderPaths(tree)}
+          folder={selected ? selected.split('/').slice(0, -1).join('/') : (target ?? '')}
+          current={note}
+          notePaths={notes.map((n) => n.rel)}
+          kind={composer.kind}
+          onCreate={createDocument}
+          onClose={() => setComposer(null)}
+        />
+      )}
+      {palette && (
+        <CommandPalette
+          commands={paletteCommands}
+          notes={notesTab.map((n) => ({ rel: n.rel, title: n.title }))}
+          searchBodies={searchBodies}
+          onOpen={(rel) => guard(() => open(rel))}
+          onClose={() => setPalette(false)}
+        />
+      )}
     </div>
   )
 }

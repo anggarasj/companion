@@ -6,6 +6,8 @@ const p = (rel: string) => fileURLToPath(new URL(rel, import.meta.url));
 export default defineConfig({
   resolve: {
     alias: {
+      // shadcn's alias; only the desktop app uses it.
+      '@': p('./apps/desktop/src'),
       '@meetcc/shared': p('./packages/shared/src'),
       '@meetcc/ai': p('./packages/ai/src'),
       '@meetcc/meeting': p('./packages/meeting/src'),

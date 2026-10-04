@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { saveTarget, settleSaved } from './saveTarget'
+import { docPath, saveTarget, settleSaved } from './saveTarget'
 import type { VaultNote } from '@meetcc/vault'
 
 const meeting: VaultNote = {
@@ -73,5 +73,45 @@ describe('settleSaved', () => {
     expect(out.note.body).toBe('catatan lagi')
     // the next save must land on the copy, not make a second one
     expect(out.note).toMatchObject({ id: 'c-1', sessionKey: 'nota/c', platform: 'manual', source: meeting.sessionKey })
+  })
+})
+
+describe('a file from another editor', () => {
+  it('gets an identity on its first save, in place', () => {
+    const foreign: VaultNote = { id: '', sessionKey: '', platform: '', updatedAt: '', title: 'RANGKUMAN', body: 'x' }
+    const out = saveTarget({
+      note: foreign,
+      selected: 'RANGKUMAN-APS.md',
+      target: null,
+      relPath: () => 'unused.md',
+      newSessionKey: () => 'nota/k',
+    })
+    expect(out.rel).toBe('RANGKUMAN-APS.md')
+    expect(out.copied).toBe(false)
+    expect(out.note.id).toMatch(/^[0-9a-f-]{36}$/)
+    expect(out.note.sessionKey).toBe('nota/k')
+  })
+
+  it('keeps an identity it already has', () => {
+    const own: VaultNote = { id: 'abc', sessionKey: 'nota/x', platform: 'manual', updatedAt: '', title: 't', body: '' }
+    const out = saveTarget({ note: own, selected: 't.md', target: null, relPath: () => 't.md' })
+    expect([out.note.id, out.note.sessionKey]).toEqual(['abc', 'nota/x'])
+  })
+})
+
+describe('docPath', () => {
+  it('names the file after the title, inside the chosen folder', () => {
+    expect(docPath('Product/Auth', 'PRD Passkey', [])).toBe('Product/Auth/PRD Passkey.md')
+    expect(docPath('', 'Notulen Rapat', [])).toBe('Notulen Rapat.md')
+  })
+
+  it('never overwrites an existing file', () => {
+    const existing = ['Product/PRD.md', 'Product/prd 2.md']
+    expect(docPath('Product', 'PRD', existing)).toBe('Product/PRD 3.md')
+  })
+
+  it('cannot escape the folder through the title', () => {
+    expect(docPath('A', '../../etc/passwd', [])).toBe('A/-..-etc-passwd.md')
+    expect(docPath('A', '   ', [])).toBe('A/Untitled.md')
   })
 })

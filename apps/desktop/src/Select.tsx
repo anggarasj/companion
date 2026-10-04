@@ -8,7 +8,8 @@
 // keyboard-operable for free, so this one is too: Up/Down move, Enter and
 // Space choose, Escape closes without changing anything, Home/End jump.
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button } from '@meetcc/ui'
+import { ChevronDown } from 'lucide-react'
+import { cn } from '@/lib/utils'
 
 /** The five the palette already has; anything unmapped stays neutral. */
 export type Tone = 'neutral' | 'info' | 'warning' | 'danger' | 'success'
@@ -21,14 +22,47 @@ export interface Option {
   tone?: Tone
 }
 
+// The dot does the work; the text is only tinted, so the tone is never the
+// sole carrier of meaning for anyone who cannot separate these hues.
+const DOT: Record<Tone, string> = {
+  neutral: 'bg-muted-foreground',
+  info: 'bg-info',
+  warning: 'bg-warning',
+  danger: 'bg-destructive',
+  success: 'bg-primary',
+}
+const TEXT: Record<Tone, string> = {
+  neutral: '',
+  info: 'text-info',
+  warning: 'text-warning',
+  danger: 'text-destructive',
+  success: 'text-primary',
+}
+
+const toneOf = (option: Option | undefined): Tone => (option?.value === '' ? 'neutral' : (option?.tone ?? 'neutral'))
+
 function Dot({ option }: { option: Option }) {
   // An empty value is "nothing chosen", which is not the same as a grey
   // status — it gets a hollow dot rather than a filled neutral one.
-  const cls = option.value === '' ? 'tone-dot tone-empty' : `tone-dot tone-${option.tone ?? 'neutral'}`
-  return <span className={cls} aria-hidden="true" />
+  const empty = option.value === ''
+  return (
+    <span
+      data-dot={empty ? 'empty' : toneOf(option)}
+      className={cn('size-[7px] flex-none rounded-full', empty ? 'ring-1 ring-inset ring-border' : DOT[toneOf(option)])}
+      aria-hidden="true"
+    />
+  )
 }
 
-/** Keep in step with `max-height` on `.select-list`. */
+function Label({ option, className }: { option: Option | undefined; className?: string }) {
+  return (
+    <span data-tone={toneOf(option)} className={cn('truncate', TEXT[toneOf(option)], className)}>
+      {option?.label ?? ''}
+    </span>
+  )
+}
+
+/** Keep in step with the panel's `max-h-[220px]` plus its offset. */
 const PANEL_MAX = 232
 
 export function Select({
@@ -36,11 +70,16 @@ export function Select({
   options,
   onChange,
   label,
+  compact = false,
+  className,
 }: {
   value: string
   options: Option[]
   onChange: (value: string) => void
   label: string
+  /** The AI panel's pickers: one short line, no tone dots, list opens leftwards-anchored. */
+  compact?: boolean
+  className?: string
 }) {
   const [open, setOpen] = useState(false)
   // Which way the panel opens. A select sitting in the editor's action bar is
@@ -132,34 +171,50 @@ export function Select({
   }
 
   return (
-    <div className="select" ref={wrap}>
-      <Button type="button"
-      className="select-button"
-      aria-haspopup="listbox"
-      aria-expanded={open}
-      aria-label={label}
-      onClick={() => setOpen((o) => !o)}
-      onKeyDown={onKeyDown}>{current && <Dot option={current} />}
-      <span className={`tone-label tone-${current?.value === '' ? 'neutral' : (current?.tone ?? 'neutral')}`}>
-        {current?.label ?? ''}
-      </span>
-      <span className="select-chevron" aria-hidden="true" /></Button>
+    <div className={cn('relative', className)} ref={wrap}>
+      <button
+        type="button"
+        className={cn(
+          'flex w-full items-center gap-2 rounded-lg border bg-sunken text-left text-foreground outline-none hover:border-muted-foreground focus-visible:border-primary',
+          compact ? 'h-7 gap-1.5 rounded-md px-2 text-xs' : 'h-[34px] px-2.5 text-[13px]',
+        )}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={label}
+        onClick={() => setOpen((o) => !o)}
+        onKeyDown={onKeyDown}
+      >
+        {current && !compact && <Dot option={current} />}
+        <Label option={current} className="min-w-0" />
+        <ChevronDown className="ml-auto size-3.5 flex-none text-muted-foreground" aria-hidden="true" />
+      </button>
 
       {open && (
-        <div className={up ? 'select-list up' : 'select-list'} role="listbox" aria-label={label} ref={list}>
+        <div
+          className={cn(
+            // Sized to its longest option, not to the control: tying the width
+            // to the button made the list wide or narrow depending on which
+            // option happened to be selected.
+            'absolute z-25 max-h-[220px] w-max min-w-full max-w-[min(340px,60vw)] overflow-y-auto rounded-xl border bg-popover p-1 text-popover-foreground shadow-lg',
+            up ? 'bottom-[calc(100%+6px)]' : 'top-[calc(100%+6px)]',
+            compact ? 'left-0' : 'right-0',
+          )}
+          data-side={up ? 'top' : 'bottom'}
+          role="listbox"
+          aria-label={label}
+          ref={list}
+        >
           {options.map((o, i) => (
             <div
               key={o.value}
               role="option"
               aria-selected={o.value === value}
               data-cursor={i === cursor}
-              className={[
-                'select-option',
-                i === cursor ? 'cursor' : '',
-                o.value === value ? 'selected' : '',
-              ]
-                .filter(Boolean)
-                .join(' ')}
+              className={cn(
+                'flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-md px-2 py-1.5 text-[13px]',
+                i === cursor && 'bg-muted',
+                o.value === value && 'font-semibold text-primary',
+              )}
               onMouseEnter={() => setCursor(i)}
               onMouseDown={(e) => {
                 // mousedown, not click: the outside-click listener fires first
@@ -168,10 +223,8 @@ export function Select({
                 choose(i)
               }}
             >
-              <Dot option={o} />
-              <span className={`tone-label tone-${o.value === '' ? 'neutral' : (o.tone ?? 'neutral')}`}>
-                {o.label}
-              </span>
+              {!compact && <Dot option={o} />}
+              <Label option={o} />
             </div>
           ))}
         </div>

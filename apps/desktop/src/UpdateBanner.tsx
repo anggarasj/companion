@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { t } from "@meetcc/shared/i18n";
-import { Button } from '@meetcc/ui';
+import { Button } from '@/components/ui/button';
 
 /** Tells you a newer build exists and installs it on request.
  *
@@ -49,20 +49,23 @@ export default function UpdateBanner() {
   }
 
   return (
-    <div className="update-banner" role="status">
-      <span>
+    <div
+      className="fixed inset-x-0 top-0 z-40 flex items-center gap-2.5 border-b bg-card px-4 py-2.5 text-xs"
+      role="status"
+    >
+      <span className="mr-auto">
         {failed
           ? t('desktop.update.failed')
           : t('desktop.update.available', { version: update.version })}
       </span>
-      <Button variant="primary" onClick={() => void install()} disabled={busy}>
+      <Button size="sm" onClick={() => void install()} disabled={busy}>
         {busy
           ? t('desktop.update.installing')
           : failed
             ? t('desktop.update.retry')
             : t('desktop.update.restart')}
       </Button>
-      <Button onClick={() => setUpdate(null)} disabled={busy}>
+      <Button variant="outline" size="sm" onClick={() => setUpdate(null)} disabled={busy}>
         Nanti
       </Button>
     </div>

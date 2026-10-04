@@ -3,7 +3,6 @@ import { act, cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Vault, VaultNote } from '@meetcc/vault'
-import { ToastProvider } from '@meetcc/ui'
 import { t } from '@meetcc/shared/i18n'
 import { MeetingMeta } from './MeetingMeta'
 import { loadAiSettings } from './aiSettings'
@@ -62,11 +61,7 @@ afterEach(() => {
 describe('desktop meeting AI', () => {
   it('answers from the loaded transcript and shows verified source evidence', async () => {
     const user = userEvent.setup()
-    render(
-      <ToastProvider>
-        <MeetingMeta note={note} vault={vault} />
-      </ToastProvider>,
-    )
+    render(<MeetingMeta note={note} vault={vault} />)
 
     await user.click(screen.getByRole('button', { name: t('desktop.meeting.showTranscript') }))
     await user.type(await screen.findByRole('textbox', { name: t('desktop.meeting.askQuestion') }), 'Apa keputusan rapat?')
@@ -88,18 +83,10 @@ describe('desktop meeting AI', () => {
     const user = userEvent.setup()
     const pendingRead = deferred<string>()
     vi.mocked(vault.io.readFile).mockReturnValueOnce(pendingRead.promise)
-    const { rerender } = render(
-      <ToastProvider>
-        <MeetingMeta note={note} vault={vault} />
-      </ToastProvider>,
-    )
+    const { rerender } = render(<MeetingMeta note={note} vault={vault} />)
 
     await user.click(screen.getByRole('button', { name: t('desktop.meeting.showTranscript') }))
-    rerender(
-      <ToastProvider>
-        <MeetingMeta note={{ ...note, id: 'note-b', sessionKey: 'other#2026-09-28T10:00' }} vault={vault} />
-      </ToastProvider>,
-    )
+    rerender(<MeetingMeta note={{ ...note, id: 'note-b', sessionKey: 'other#2026-09-28T10:00' }} vault={vault} />)
     await act(async () => pendingRead.resolve(JSON.stringify({ ...lines[0], text: 'A-only transcript' })))
 
     expect(screen.queryByText('A-only transcript')).toBeNull()
@@ -110,20 +97,12 @@ describe('desktop meeting AI', () => {
     const user = userEvent.setup()
     const pendingAnswer = deferred<AskResult>()
     vi.mocked(askMeeting).mockReturnValueOnce(pendingAnswer.promise)
-    const { rerender } = render(
-      <ToastProvider>
-        <MeetingMeta note={note} vault={vault} />
-      </ToastProvider>,
-    )
+    const { rerender } = render(<MeetingMeta note={note} vault={vault} />)
 
     await user.click(screen.getByRole('button', { name: t('desktop.meeting.showTranscript') }))
     await user.type(await screen.findByRole('textbox', { name: t('desktop.meeting.askQuestion') }), 'Question for A')
     await user.click(screen.getByRole('button', { name: t('desktop.meeting.ask') }))
-    rerender(
-      <ToastProvider>
-        <MeetingMeta note={{ ...note, id: 'note-b', sessionKey: 'other#2026-09-28T10:00' }} vault={vault} />
-      </ToastProvider>,
-    )
+    rerender(<MeetingMeta note={{ ...note, id: 'note-b', sessionKey: 'other#2026-09-28T10:00' }} vault={vault} />)
     await act(async () => pendingAnswer.resolve({
       answer: 'A-only answer',
       answerability: 'explicit',

@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath } from 'node:url';
 
 const p = (rel: string) => fileURLToPath(new URL(rel, import.meta.url));
@@ -7,7 +8,7 @@ const p = (rel: string) => fileURLToPath(new URL(rel, import.meta.url));
 // Desktop shell: Tauri loads built assets from ../dist. Aliases mirror the
 // extension so packaged packages resolve the same way across the monorepo.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   clearScreen: false,
   base: '',
   server: {
@@ -28,6 +29,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      '@': p('./src'),
       // Deep path on purpose: the @meetcc/shared barrel re-exports modules that
       // reach for chrome.*, which does not exist in a Tauri window.
       '@meetcc/shared/i18n': p('../../packages/shared/src/i18n'),
