@@ -1,3 +1,4 @@
+import { t } from './i18n';
 import { decryptString, encryptString } from './crypto';
 import { migrateAnalysis } from './migrate';
 import {
@@ -37,6 +38,7 @@ export const DOCPROG_PREFIX = 'docprog:';
 export const TITLE_PREFIX = 'title:';
 export const CONTEXT_PREFIX = 'context:';
 export const MEETING_TAGS_PREFIX = 'tags:';
+export const MERGED_PREFIX = 'merge-sources:';
 export const MINI_CONTEXTS_KEY = 'mini_contexts';
 const SETTINGS_KEY = 'settings';
 export const AUDIT_KEY = 'audit';
@@ -100,6 +102,26 @@ export function parseMeetings(all: Record<string, unknown>): Meeting[] {
   return [...byId.values()].sort(
     (a, b) => sortKey(b) - sortKey(a) || a.id.localeCompare(b.id),
   );
+}
+
+export function mergeTranscriptEntries(meetings: Meeting[]): Entry[] {
+  const ordered = meetings
+    .flatMap((meeting) => meeting.entries)
+    .map((entry, index) => ({ entry, index }));
+  ordered.sort((a, b) => {
+    const left = Date.parse(a.entry.time);
+    const right = Date.parse(b.entry.time);
+    return (
+      (Number.isFinite(left) ? left : Infinity) -
+        (Number.isFinite(right) ? right : Infinity) ||
+      a.index - b.index
+    );
+  });
+  return ordered.map(({ entry }) => {
+    const mergedEntry = { ...entry };
+    delete mergedEntry.id;
+    return mergedEntry;
+  });
 }
 
 export function parseAnalyses(all: Record<string, unknown>): Record<string, AnalysisRecord> {
@@ -169,8 +191,8 @@ export async function setAnalysis(id: string, record: AnalysisRecord): Promise<v
   await chrome.storage.local.set({ [ANALYSIS_PREFIX + id]: record });
 }
 
-export async function clearMeeting(id: string): Promise<void> {
-  await chrome.storage.local.remove([
+function meetingStorageKeys(id: string): string[] {
+  return [
     TRANSCRIPT_PREFIX + id,
     META_PREFIX + id,
     ANALYSIS_PREFIX + id,
@@ -182,9 +204,89 @@ export async function clearMeeting(id: string): Promise<void> {
     TITLE_PREFIX + id,
     CONTEXT_PREFIX + id,
     MEETING_TAGS_PREFIX + id,
-  ]);
+    MERGED_PREFIX + id,
+  ];
 }
 
+export async function clearMeeting(id: string): Promise<void> {
+  await chrome.storage.local.remove(meetingStorageKeys(id));
+}
+
+export interface MeetingMergeSelection {
+  ids: string[];
+  targetId: string;
+}
+
+export function parseMeetingMergeSelection(
+  idsValue: unknown,
+  targetValue: unknown,
+): MeetingMergeSelection {
+  const ids = Array.isArray(idsValue)
+    ? [...new Set(idsValue.filter((id): id is string => typeof id === 'string' && id.length > 0))]
+    : [];
+  const targetId = typeof targetValue === 'string' ? targetValue : '';
+  if (ids.length < 2 || !targetId || !ids.includes(targetId)) {
+    throw new Error(t('ext.sidebar.mergeSelectionRequired'));
+  }
+  return { ids, targetId };
+}
+
+export interface MergedMeetings {
+  targetId: string;
+  sourceIds: string[];
+  entries: number;
+}
+
+export async function mergeStoredMeetings(
+  selection: MeetingMergeSelection,
+): Promise<MergedMeetings> {
+  const { ids, targetId } = selection;
+  const all = await chrome.storage.local.get(null);
+  const meetingsById = new Map(parseMeetings(all).map((meeting) => [meeting.id, meeting]));
+  const selected = ids.map((id) => meetingsById.get(id));
+  if (selected.some((meeting) => !meeting)) throw new Error(t('ext.err.meetingNotFound'));
+  const target = meetingsById.get(targetId);
+  if (!target) throw new Error(t('ext.err.meetingNotFound'));
+  const sources = selected.filter((meeting): meeting is Meeting => !!meeting && meeting.id !== targetId);
+  if (sources.some((meeting) => isLive(meeting, Date.now()))) {
+    throw new Error(t('ext.sidebar.liveSourceMergeBlocked'));
+  }
+
+  const currentHistory = all[MERGED_PREFIX + targetId];
+  const previous = Array.isArray(currentHistory)
+    ? currentHistory.filter((id): id is string => typeof id === 'string')
+    : [];
+  const alreadyMerged = new Set(previous);
+  const additions = sources.filter((meeting) => !alreadyMerged.has(meeting.id));
+  const sourceHistory = [...new Set([...previous, ...sources.map((meeting) => meeting.id)])];
+  const entries = mergeTranscriptEntries([target, ...additions]);
+  const targetMeta = target.meta
+    ? {
+        ...target.meta,
+        lastSeenAt: sources.reduce(
+          (latest, meeting) =>
+            meeting.meta && meeting.meta.lastSeenAt > latest ? meeting.meta.lastSeenAt : latest,
+          target.meta.lastSeenAt,
+        ),
+      }
+    : undefined;
+  const sourceIds = sources.map((meeting) => meeting.id);
+  await chrome.storage.local.set({
+    [TRANSCRIPT_PREFIX + targetId]: entries,
+    ...(targetMeta ? { [META_PREFIX + targetId]: targetMeta } : {}),
+    [MERGED_PREFIX + targetId]: sourceHistory,
+  });
+  await chrome.storage.local.remove([
+    ANALYSIS_PREFIX + targetId,
+    CHAT_PREFIX + targetId,
+    CLEAN_PREFIX + targetId,
+    DOCS_PREFIX + targetId,
+    DOCPROG_PREFIX + targetId,
+    RESOLVED_PREFIX + targetId,
+    ...sourceIds.flatMap(meetingStorageKeys),
+  ]);
+  return { targetId, sourceIds, entries: entries.length };
+}
 // -- meeting context & goals (user-provided background to steer AI analysis) --
 
 export async function getContext(id: string): Promise<string> {

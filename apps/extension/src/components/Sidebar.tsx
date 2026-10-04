@@ -94,6 +94,7 @@ interface Props {
   onDelete: (id: string) => void
   onExportMeetings: (ids: string[]) => Promise<string[]>
   onDeleteMeetings: (ids: string[]) => Promise<string[] | null>
+  onMergeMeetings: (ids: string[], targetId: string) => Promise<boolean>
 }
 
 export function Sidebar({
@@ -112,12 +113,15 @@ export function Sidebar({
   onDelete,
   onExportMeetings,
   onDeleteMeetings,
+  onMergeMeetings,
 }: Props) {
   const [open, setOpen] = useState(true)
   const [selecting, setSelecting] = useState(false)
   const [selectedMeetings, setSelectedMeetings] = useState<Set<string>>(() => new Set())
   const [exporting, setExporting] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [merging, setMerging] = useState(false)
+  const [mergeTarget, setMergeTarget] = useState('')
   // P2.3 — project grouping. The mapping lives in the index, so a failed load
   // just means the filter is unavailable, never an empty meeting list.
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([])
@@ -178,8 +182,25 @@ export function Sidebar({
     setSelecting(false)
     setSelectedMeetings(new Set())
   }
+  const selectedForMerge = meetings.filter((meeting) => selectedMeetings.has(meeting.id))
+  const defaultMergeTarget = selectedMeetings.has(selectedId ?? '')
+    ? selectedId!
+    : selectedForMerge[0]?.id ?? ''
+  const mergeTargetId = selectedMeetings.has(mergeTarget) ? mergeTarget : defaultMergeTarget
+  const mergeSourcesLive = selectedForMerge.some(
+    (meeting) => meeting.id !== mergeTargetId && isLive(meeting, now),
+  )
+  const mergeSelected = async () => {
+    if (selectedForMerge.length < 2 || !mergeTargetId || mergeSourcesLive || merging) return
+    setMerging(true)
+    try {
+      if (await onMergeMeetings([...selectedMeetings], mergeTargetId)) cancelSelection()
+    } finally {
+      setMerging(false)
+    }
+  }
   const transferSelected = async () => {
-    if (!selectedMeetings.size || exporting || deleting) return
+    if (!selectedMeetings.size || exporting || deleting || merging) return
     setExporting(true)
     try {
       const failedIds = await onExportMeetings([...selectedMeetings])
@@ -190,7 +211,7 @@ export function Sidebar({
     }
   }
   const deleteSelected = async () => {
-    if (!selectedMeetings.size || exporting || deleting) return
+    if (!selectedMeetings.size || exporting || deleting || merging) return
     setDeleting(true)
     try {
       const failedIds = await onDeleteMeetings([...selectedMeetings])
@@ -223,7 +244,7 @@ export function Sidebar({
           type='checkbox'
           aria-label={t('ext.sidebar.selectMeeting', { label })}
           checked={selectedMeetings.has(m.id)}
-          disabled={exporting || deleting}
+          disabled={exporting || deleting || merging}
           onChange={(event) => toggleMeeting(m.id, event.target.checked)}
         />
       )}
@@ -349,7 +370,7 @@ export function Sidebar({
             <Button
               type='button'
               variant={selecting ? 'ghost' : 'default'}
-              disabled={loading || meetings.length === 0 || exporting || deleting}
+              disabled={loading || meetings.length === 0 || exporting || deleting || merging}
               aria-pressed={selecting}
               onClick={() => selecting ? cancelSelection() : setSelecting(true)}
             >
@@ -359,7 +380,7 @@ export function Sidebar({
               <Button
                 type='button'
                 variant='ghost'
-                disabled={shown.length === 0 || exporting || deleting}
+                disabled={shown.length === 0 || exporting || deleting || merging}
                 onClick={toggleVisibleMeetings}
               >
                 {allVisibleSelected ? t('ext.sidebar.clearVisibleSelection') : t('ext.sidebar.selectVisibleMeetings')}
@@ -367,31 +388,64 @@ export function Sidebar({
             )}
           </div>
           {selecting && (
-            <div className='meeting-bulk-row'>
-              <span className='meeting-selection-count'>
-                {t('ext.sidebar.selectedMeetingCount', { count: selectedMeetings.size })}
-              </span>
-              <Button
-                type='button'
-                variant='primary'
-                disabled={!selectedMeetings.size || exporting || deleting}
-                onClick={() => void transferSelected()}
-              >
-                {exporting
-                  ? t('ext.sidebar.sendingMeetingsToDesktop')
-                  : t('ext.sidebar.sendMeetingsToDesktop', { count: selectedMeetings.size })}
-              </Button>
-              <Button
-                type='button'
-                variant='danger'
-                disabled={!selectedMeetings.size || exporting || deleting}
-                onClick={() => void deleteSelected()}
-              >
-                {deleting
-                  ? t('ext.sidebar.deletingMeetings')
-                  : t('ext.sidebar.deleteSelectedMeetings', { count: selectedMeetings.size })}
-              </Button>
-            </div>
+            <>
+              <div className='meeting-bulk-row'>
+                <span className='meeting-selection-count'>
+                  {t('ext.sidebar.selectedMeetingCount', { count: selectedMeetings.size })}
+                </span>
+                <Button
+                  type='button'
+                  variant='primary'
+                  disabled={!selectedMeetings.size || exporting || deleting || merging}
+                  onClick={() => void transferSelected()}
+                >
+                  {exporting
+                    ? t('ext.sidebar.sendingMeetingsToDesktop')
+                    : t('ext.sidebar.sendMeetingsToDesktop', { count: selectedMeetings.size })}
+                </Button>
+                <Button
+                  type='button'
+                  variant='danger'
+                  disabled={!selectedMeetings.size || exporting || deleting || merging}
+                  onClick={() => void deleteSelected()}
+                >
+                  {deleting
+                    ? t('ext.sidebar.deletingMeetings')
+                    : t('ext.sidebar.deleteSelectedMeetings', { count: selectedMeetings.size })}
+                </Button>
+              </div>
+              {selectedMeetings.size > 1 && (
+                <>
+                  <label className='meeting-merge-target'>
+                    <span>{t('ext.sidebar.mergeTarget')}</span>
+                    <select
+                      value={mergeTargetId}
+                      disabled={exporting || deleting || merging}
+                      onChange={(event) => setMergeTarget(event.target.value)}
+                    >
+                      {selectedForMerge.map((meeting) => (
+                        <option key={meeting.id} value={meeting.id}>
+                          {titles[meeting.id] || displayMeetingId(meeting.id)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {mergeSourcesLive && (
+                    <p className='meeting-merge-warning'>{t('ext.sidebar.liveSourceMergeBlocked')}</p>
+                  )}
+                  <Button
+                    type='button'
+                    variant='primary'
+                    disabled={selectedForMerge.length < 2 || mergeSourcesLive || exporting || deleting || merging}
+                    onClick={() => void mergeSelected()}
+                  >
+                    {merging
+                      ? t('ext.sidebar.mergingMeetings')
+                      : t('ext.sidebar.mergeSelectedMeetings', { count: selectedForMerge.length })}
+                  </Button>
+                </>
+              )}
+            </>
           )}
         </div>
         {loading ? (
