@@ -70,7 +70,7 @@ jobs:
             exit 0
           fi
           if git diff --name-only "$base" HEAD | grep -qE \
-              '^(apps/desktop/|packages/vault/|package(-lock)?\.json|tsconfig\.json|Makefile|\.github/workflows/ci\.yml)'; then
+              '^(apps/desktop/|packages/vault/|package(-lock)?\.json|tsconfig\.json|Makefile|\.github/workflows/ci\.yml|scripts/smoke-host-rs\.mjs)'; then
             echo "touched=true" >> "$GITHUB_OUTPUT"
           else
             echo "touched=false" >> "$GITHUB_OUTPUT"
