@@ -17,7 +17,7 @@ import { budgetLog, inScope, MAX_AGENT_STEPS, MAX_CALLS_PER_STEP, type LogEntry 
 import { parseStep } from './parser'
 import { AGENT_SYSTEM, block, buildTurn } from './prompt'
 import { callKey, runTool, type ToolState } from './tools'
-import type { AgentResult, AgentScope, AgentStep, AgentTurn, ReviewFinding, SourceRef, Workspace } from './types'
+import type { AgentResult, AgentScope, AgentStep, AgentToolCall, AgentTurn, ReviewFinding, SourceRef, Workspace } from './types'
 
 export interface Activity {
   /** The model's own one-line status, or what a tool just did. */
@@ -47,7 +47,7 @@ export interface RunOptions {
   maxSteps?: number
 }
 
-const SEVERITIES = ['info', 'warning', 'critical'] as const
+const SEVERITIES = new Set<unknown>(['info', 'warning', 'critical'])
 const EXCERPT_CHARS = 300
 
 function entry(n: number, tool: string, result: Record<string, unknown>): LogEntry {
@@ -98,22 +98,7 @@ export async function runAgent(o: RunOptions): Promise<AgentResult> {
     if (s.type === 'final') return finish(o, state, s, step)
     if (step === max) break
     if (s.status) o.onActivity?.({ status: s.status })
-    for (const call of s.calls.slice(0, MAX_CALLS_PER_STEP)) {
-      if (o.signal?.aborted) throw new DOMException('Generation cancelled', 'AbortError')
-      const key = callKey(call)
-      const earlier = seen.get(key)
-      if (earlier !== undefined) {
-        log.push(entry(log.length + 1, 'duplicate', { note: `same call as result #${earlier}; not repeated — use that result` }))
-        continue
-      }
-      const out = await runTool(call, o.workspace, o.scope, state)
-      seen.set(key, log.length + 1)
-      log.push(entry(log.length + 1, out.activity.tool, out.result))
-      o.onActivity?.({ tool: out.activity.tool, detail: out.activity.detail })
-    }
-    if (s.calls.length > MAX_CALLS_PER_STEP) {
-      log.push(entry(log.length + 1, 'limit', { note: `only the first ${MAX_CALLS_PER_STEP} calls of a step run` }))
-    }
+    await runCalls(o, s.calls, state, log, seen)
   }
   throw new AIError(t('desktop.agent.stepLimit', { count: max }), false)
 }
@@ -136,27 +121,55 @@ async function convertMermaid(o: RunOptions, changes: unknown[]): Promise<Map<un
   return out
 }
 
+/** One step's tool calls, in order, into the log; a call already made in this run is not made again. */
+async function runCalls(o: RunOptions, calls: AgentToolCall[], state: ToolState, log: LogEntry[], seen: Map<string, number>): Promise<void> {
+  for (const call of calls.slice(0, MAX_CALLS_PER_STEP)) {
+    if (o.signal?.aborted) throw new DOMException('Generation cancelled', 'AbortError')
+    const key = callKey(call)
+    const earlier = seen.get(key)
+    if (earlier !== undefined) {
+      log.push(entry(log.length + 1, 'duplicate', { note: `same call as result #${earlier}; not repeated — use that result` }))
+      continue
+    }
+    const out = await runTool(call, o.workspace, o.scope, state)
+    seen.set(key, log.length + 1)
+    log.push(entry(log.length + 1, out.activity.tool, out.result))
+    o.onActivity?.({ tool: out.activity.tool, detail: out.activity.detail })
+  }
+  if (calls.length > MAX_CALLS_PER_STEP) {
+    log.push(entry(log.length + 1, 'limit', { note: `only the first ${MAX_CALLS_PER_STEP} calls of a step run` }))
+  }
+}
+
+/** A finding from the model, kept only in a usable shape and citing only what was read. */
+function toFinding(raw: unknown, reads: ToolState['reads']): ReviewFinding | null {
+  const f = raw as Record<string, unknown>
+  if (typeof f !== 'object' || !f || typeof f.title !== 'string' || !f.title.trim() || typeof f.explanation !== 'string') return null
+  return {
+    severity: SEVERITIES.has(f.severity) ? (f.severity as ReviewFinding['severity']) : 'info',
+    title: f.title.trim(),
+    explanation: f.explanation.trim(),
+    sources: citations(f.sources, reads),
+    ...(typeof f.suggestedFix === 'string' && f.suggestedFix.trim() ? { suggestedFix: f.suggestedFix.trim() } : {}),
+  }
+}
+
+function citations(raw: unknown, reads: ToolState['reads']): ReviewFinding['sources'] {
+  const out: ReviewFinding['sources'] = []
+  for (const c of Array.isArray(raw) ? (raw as Record<string, unknown>[]) : []) {
+    if (!c || typeof c.path !== 'string' || !reads.has(c.path)) continue
+    out.push({ path: c.path, ...(typeof c.excerpt === 'string' && c.excerpt ? { excerpt: c.excerpt.slice(0, EXCERPT_CHARS) } : {}) })
+  }
+  return out
+}
+
 async function finish(o: RunOptions, state: ToolState, final: Extract<AgentStep, { type: 'final' }>, steps: number): Promise<AgentResult> {
   const reads = state.reads
   const ref = (path: string): SourceRef => ({ path, title: reads.get(path)?.title || path })
-  const sources = [...new Set(final.sources ?? [])].filter((p) => reads.has(p)).map(ref)
-
-  const findings: ReviewFinding[] = []
-  for (const raw of final.findings ?? []) {
-    const f = raw as Record<string, unknown>
-    if (typeof f !== 'object' || !f || typeof f.title !== 'string' || !f.title.trim() || typeof f.explanation !== 'string') continue
-    const cited = Array.isArray(f.sources) ? (f.sources as Record<string, unknown>[]) : []
-    findings.push({
-      severity: SEVERITIES.includes(f.severity as (typeof SEVERITIES)[number]) ? (f.severity as ReviewFinding['severity']) : 'info',
-      title: f.title.trim(),
-      explanation: f.explanation.trim(),
-      // Only what was read can be cited.
-      sources: cited
-        .filter((c) => c && typeof c.path === 'string' && reads.has(c.path))
-        .map((c) => ({ path: c.path as string, ...(typeof c.excerpt === 'string' && c.excerpt ? { excerpt: c.excerpt.slice(0, EXCERPT_CHARS) } : {}) })),
-      ...(typeof f.suggestedFix === 'string' && f.suggestedFix.trim() ? { suggestedFix: f.suggestedFix.trim() } : {}),
-    })
-  }
+  // Only what was read can be cited.
+  const sources: SourceRef[] = []
+  for (const p of new Set(final.sources ?? [])) if (reads.has(p)) sources.push(ref(p))
+  const findings = (final.findings ?? []).flatMap((raw) => toFinding(raw, reads) ?? [])
 
   const lower = new Set([...o.workspace.paths(), ...o.workspace.files()].map((p) => p.toLowerCase()))
   const { staged, rejected } = stageChanges(final.changes ?? [], {

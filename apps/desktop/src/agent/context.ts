@@ -49,10 +49,9 @@ export function rankHits(hits: SearchHit[], query: string, nearFolder?: string):
     const recent = ((times[i] - oldest) / span) * 0.05
     return fts * 1 + title + near + recent
   }
-  return hits
-    .map((h, i) => ({ h, s: score(h, i) }))
-    .sort((a, b) => b.s - a.s)
-    .map((x) => x.h)
+  const scored = hits.map((h, i) => ({ h, s: score(h, i) }))
+  scored.sort((a, b) => b.s - a.s)
+  return scored.map((x) => x.h)
 }
 
 /** A note body cut to the per-note budget, from `offset`, saying what was left out. */

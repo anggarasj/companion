@@ -112,8 +112,9 @@ function turnOf(request: string, r: AgentResult): AgentTurn {
 /** The documents a result shows, in display order — what "the second one" counts through. */
 function refsOf(r: AgentResult): SourceRef[] {
   if (r.sources.length) return r.sources
-  const seen = new Set<string>()
-  return r.findings.flatMap((f) => f.sources).filter((s) => !seen.has(s.path) && seen.add(s.path)).map((s) => ({ path: s.path, title: s.path }))
+  const refs = new Map<string, SourceRef>()
+  for (const s of r.findings.flatMap((f) => f.sources)) refs.set(s.path, refs.get(s.path) ?? { path: s.path, title: s.path })
+  return [...refs.values()]
 }
 
 export function AISidebar({
@@ -236,8 +237,9 @@ export function AISidebar({
     const target = workspace()
     const status: Record<string, ChangeStatus> = {}
     const applied: AppliedChange[] = []
+    const wanted = new Set(ids)
     for (const c of m.result.changeSet?.changes ?? []) {
-      if (!ids.includes(c.id) || m.status[c.id] !== 'pending') continue
+      if (!wanted.has(c.id) || m.status[c.id] !== 'pending') continue
       try {
         const r = await applyChange(c, target)
         status[c.id] = r.ok ? 'applied' : r.reason
@@ -257,11 +259,13 @@ export function AISidebar({
     const r = await undoApplied(m.applied, workspace())
     if (!r.ok) return patchAI(m.id, () => ({ undoConflicts: r.conflicts }))
     patchAI(m.id, () => ({ undone: true, undoConflicts: [] }))
-    onChanged(m.applied.filter((a) => a.before === null).map((a) => a.path))
+    // A change that created a note or board took it away again.
+    onChanged(m.applied.flatMap((a) => (a.before === null ? [a.path] : [])))
   }
 
   function fix(m: AIMessage): void {
-    const chosen = m.picked.map((i) => m.result.findings[i]).filter(Boolean)
+    const picked = new Set(m.picked)
+    const chosen = m.result.findings.filter((_, i) => picked.has(i))
     if (!chosen.length) return
     // The request is for the model; the bubble says it in the user's language.
     void send(
@@ -329,12 +333,7 @@ export function AISidebar({
           ) : (
             <div key={m.id} className="flex flex-col gap-2 text-[13px] leading-relaxed">
               {m.result.answer && <div className={ANSWER} dangerouslySetInnerHTML={{ __html: answerHTML(m.result.answer) }} />}
-              {m.result.sources.length > 0 && (
-                <div className="flex flex-col gap-1">
-                  <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t('desktop.aiPanel.sources')}</span>
-                  <div className="flex flex-wrap gap-1">{m.result.sources.map(chip)}</div>
-                </div>
-              )}
+              {m.result.sources.length > 0 && <Sources sources={m.result.sources} chip={chip} />}
               {m.result.findings.length > 0 && <Findings m={m} chip={chip} onPick={(picked) => patchAI(m.id, () => ({ picked }))} onFix={() => fix(m)} busy={busy} />}
               {m.result.changeSet && (
                 <ChangeSetView
@@ -345,16 +344,7 @@ export function AISidebar({
                   onToggleDiff={(id) => patchAI(m.id, (cur) => ({ diffs: { ...cur.diffs, [id]: !cur.diffs[id] } }))}
                 />
               )}
-              {m.result.rejected.length > 0 && (
-                <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
-                  <span>{t('desktop.aiPanel.refused', { count: m.result.rejected.length })}</span>
-                  {m.result.rejected.map((r, i) => (
-                    <span key={i} className="font-mono">
-                      {r.path || '—'}: {r.reason}
-                    </span>
-                  ))}
-                </div>
-              )}
+              {m.result.rejected.length > 0 && <Refused items={m.result.rejected} />}
             </div>
           ),
         )}
@@ -439,6 +429,28 @@ export function AISidebar({
   )
 }
 
+function Sources({ sources, chip }: { sources: SourceRef[]; chip: (s: SourceRef) => ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t('desktop.aiPanel.sources')}</span>
+      <div className="flex flex-wrap gap-1">{sources.map(chip)}</div>
+    </div>
+  )
+}
+
+function Refused({ items }: { items: { path: string; reason: string }[] }) {
+  return (
+    <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
+      <span>{t('desktop.aiPanel.refused', { count: items.length })}</span>
+      {items.map((r, i) => (
+        <span key={i} className="font-mono">
+          {r.path || '—'}: {r.reason}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 function Findings({
   m,
   chip,
@@ -452,36 +464,53 @@ function Findings({
   onFix: () => void
   busy: boolean
 }) {
+  const picked = new Set(m.picked)
+  const toggle = (i: number, on: boolean) => {
+    const next = new Set(picked)
+    if (on) next.add(i)
+    else next.delete(i)
+    onPick([...next])
+  }
   return (
     <div className="flex flex-col gap-2">
       <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
         {t('desktop.aiPanel.findings', { count: m.result.findings.length })}
       </span>
       {m.result.findings.map((f, i) => (
-        <label key={i} className="flex gap-2 rounded-lg border px-2.5 py-2 [&>input]:accent-primary">
-          <input
-            type="checkbox"
-            className="mt-1"
-            checked={m.picked.includes(i)}
-            onChange={(e) => onPick(e.target.checked ? [...m.picked, i] : m.picked.filter((x) => x !== i))}
-          />
-          <span className="flex min-w-0 flex-col gap-1">
-            <span className="text-[12.5px] font-semibold">
-              <span className={cn('mr-1.5 text-[11px] uppercase', SEVERITY[f.severity].className)}>{t(SEVERITY[f.severity].label)}</span>
-              {f.title}
-            </span>
-            <span className={cn(ANSWER, 'text-[12.5px]')} dangerouslySetInnerHTML={{ __html: answerHTML(f.explanation) }} />
-            {f.suggestedFix && <span className="text-xs text-muted-foreground">{t('desktop.aiPanel.suggestedFix', { fix: f.suggestedFix })}</span>}
-            {f.sources.length > 0 && (
-              <span className="flex flex-wrap gap-1">{f.sources.map((s) => chip({ path: s.path, title: s.path.split('/').pop() ?? s.path }))}</span>
-            )}
-          </span>
-        </label>
+        <FindingCard key={i} finding={f} checked={picked.has(i)} onToggle={(on) => toggle(i, on)} chip={chip} />
       ))}
       <Button type="button" variant="secondary" size="xs" className="self-start" disabled={busy || !m.picked.length} onClick={onFix}>
         <Sparkles /> {t('desktop.aiPanel.fixSelected')}
       </Button>
     </div>
+  )
+}
+
+function FindingCard({
+  finding: f,
+  checked,
+  onToggle,
+  chip,
+}: {
+  finding: ReviewFinding
+  checked: boolean
+  onToggle: (on: boolean) => void
+  chip: (s: SourceRef) => ReactNode
+}) {
+  const cited = f.sources.map((s) => ({ path: s.path, title: s.path.split('/').pop() ?? s.path }))
+  return (
+    <label className="flex gap-2 rounded-lg border px-2.5 py-2 [&>input]:accent-primary">
+      <input type="checkbox" className="mt-1" checked={checked} onChange={(e) => onToggle(e.target.checked)} />
+      <span className="flex min-w-0 flex-col gap-1">
+        <span className="text-[12.5px] font-semibold">
+          <span className={cn('mr-1.5 text-[11px] uppercase', SEVERITY[f.severity].className)}>{t(SEVERITY[f.severity].label)}</span>
+          {f.title}
+        </span>
+        <span className={cn(ANSWER, 'text-[12.5px]')} dangerouslySetInnerHTML={{ __html: answerHTML(f.explanation) }} />
+        {f.suggestedFix && <span className="text-xs text-muted-foreground">{t('desktop.aiPanel.suggestedFix', { fix: f.suggestedFix })}</span>}
+        {cited.length > 0 && <span className="flex flex-wrap gap-1">{cited.map(chip)}</span>}
+      </span>
+    </label>
   )
 }
 
@@ -499,49 +528,18 @@ function ChangeSetView({
   onToggleDiff: (id: string) => void
 }) {
   const set = m.result.changeSet!
-  const pending = set.changes.filter((c) => m.status[c.id] === 'pending').map((c) => c.id)
-  const files = [...new Set(set.changes.map((c) => c.path))]
+  const pending: string[] = []
+  const byFile = new Map<string, StagedChange[]>()
+  for (const c of set.changes) {
+    if (m.status[c.id] === 'pending') pending.push(c.id)
+    byFile.set(c.path, [...(byFile.get(c.path) ?? []), c])
+  }
   return (
     <div className="flex flex-col gap-2 rounded-lg border px-2.5 py-[9px]">
-      <div className="text-[12.5px] font-semibold">{t('desktop.aiPanel.proposes', { count: set.changes.length, files: files.length })}</div>
+      <div className="text-[12.5px] font-semibold">{t('desktop.aiPanel.proposes', { count: set.changes.length, files: byFile.size })}</div>
       {set.summary && <p className="m-0 text-[12.5px]">{set.summary}</p>}
-      {files.map((path) => (
-        <div key={path} className="flex flex-col gap-1.5">
-          <span className="truncate font-mono text-xs">{path}</span>
-          {set.changes
-            .filter((c) => c.path === path)
-            .map((c) => {
-              const s = m.status[c.id]
-              return (
-                <div key={c.id} className="flex flex-col gap-1.5 border-l-2 pl-2">
-                  <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                    <span className="font-medium">{t(CHANGE_LABEL[c.type])}</span>
-                    {s !== 'pending' && (
-                      <span className={cn('text-muted-foreground', s === 'applied' && 'text-primary')}>
-                        {s === 'applied' && m.undone ? t('desktop.aiPanel.undone') : t(STATUS_LABEL[s])}
-                      </span>
-                    )}
-                    <span className="flex-1" />
-                    <Button type="button" variant="ghost" size="xs" onClick={() => onToggleDiff(c.id)}>
-                      {m.diffs[c.id] ? <EyeOff /> : <Eye />}
-                      {t(m.diffs[c.id] ? 'desktop.aiPanel.hideChanges' : 'desktop.aiPanel.showChanges')}
-                    </Button>
-                    {s === 'pending' && (
-                      <>
-                        <Button type="button" variant="secondary" size="xs" onClick={() => onApply([c.id])}>
-                          <Check /> {t('desktop.aiPanel.apply')}
-                        </Button>
-                        <Button type="button" variant="ghost" size="xs" onClick={() => onReject(c.id)}>
-                          <X /> {t('desktop.aiPanel.reject')}
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                  {m.diffs[c.id] && <DiffView before={c.view?.before ?? c.base ?? ''} after={c.view?.after ?? c.preview} />}
-                </div>
-              )
-            })}
-        </div>
+      {[...byFile].map(([path, changes]) => (
+        <FileChanges key={path} path={path} changes={changes} m={m} onApply={onApply} onReject={onReject} onToggleDiff={onToggleDiff} />
       ))}
       <div className="flex flex-wrap gap-1.5">
         {pending.length > 0 && (
@@ -558,6 +556,79 @@ function ChangeSetView({
       {m.undoConflicts.length > 0 && !m.undone && (
         <p className="m-0 text-xs text-muted-foreground">{t('desktop.aiPanel.undoConflict', { paths: m.undoConflicts.join(', ') })}</p>
       )}
+    </div>
+  )
+}
+
+/** One note's proposed changes, each with its own diff, Apply and Reject. */
+function FileChanges({
+  path,
+  changes,
+  m,
+  onApply,
+  onReject,
+  onToggleDiff,
+}: {
+  path: string
+  changes: StagedChange[]
+  m: AIMessage
+  onApply: (ids: string[]) => void
+  onReject: (id: string) => void
+  onToggleDiff: (id: string) => void
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="truncate font-mono text-xs">{path}</span>
+      {changes.map((c) => (
+        <ChangeRow key={c.id} change={c} status={m.status[c.id]} undone={m.undone} diff={Boolean(m.diffs[c.id])} onApply={onApply} onReject={onReject} onToggleDiff={onToggleDiff} />
+      ))}
+    </div>
+  )
+}
+
+function ChangeRow({
+  change: c,
+  status: s,
+  undone,
+  diff,
+  onApply,
+  onReject,
+  onToggleDiff,
+}: {
+  change: StagedChange
+  status: ChangeStatus
+  undone: boolean
+  diff: boolean
+  onApply: (ids: string[]) => void
+  onReject: (id: string) => void
+  onToggleDiff: (id: string) => void
+}) {
+  return (
+    <div className="flex flex-col gap-1.5 border-l-2 pl-2">
+      <div className="flex flex-wrap items-center gap-1.5 text-xs">
+        <span className="font-medium">{t(CHANGE_LABEL[c.type])}</span>
+        {s !== 'pending' && (
+          <span className={cn('text-muted-foreground', s === 'applied' && 'text-primary')}>
+            {s === 'applied' && undone ? t('desktop.aiPanel.undone') : t(STATUS_LABEL[s])}
+          </span>
+        )}
+        <span className="flex-1" />
+        <Button type="button" variant="ghost" size="xs" onClick={() => onToggleDiff(c.id)}>
+          {diff ? <EyeOff /> : <Eye />}
+          {t(diff ? 'desktop.aiPanel.hideChanges' : 'desktop.aiPanel.showChanges')}
+        </Button>
+        {s === 'pending' && (
+          <>
+            <Button type="button" variant="secondary" size="xs" onClick={() => onApply([c.id])}>
+              <Check /> {t('desktop.aiPanel.apply')}
+            </Button>
+            <Button type="button" variant="ghost" size="xs" onClick={() => onReject(c.id)}>
+              <X /> {t('desktop.aiPanel.reject')}
+            </Button>
+          </>
+        )}
+      </div>
+      {diff && <DiffView before={c.view?.before ?? c.base ?? ''} after={c.view?.after ?? c.preview} />}
     </div>
   )
 }

@@ -131,16 +131,19 @@ const common = () => ({
 
 function wrap(label: string): string[] {
   const lines: string[] = []
-  for (const para of label.split('\n')) {
-    let line = ''
-    for (const word of para.split(/\s+/).filter(Boolean)) {
-      if (line && (line + ' ' + word).length > CHARS_PER_LINE) {
-        lines.push(line)
-        line = word
-      } else line = line ? `${line} ${word}` : word
-    }
-    lines.push(line)
+  let line = ''
+  // Words and line breaks in one pass; a break always starts a new line.
+  for (const token of label.split(/(\n)|[^\S\n]+/)) {
+    if (token === '\n') {
+      lines.push(line)
+      line = ''
+    } else if (!token) continue
+    else if (line && (line + ' ' + token).length > CHARS_PER_LINE) {
+      lines.push(line)
+      line = token
+    } else line = line ? `${line} ${token}` : token
   }
+  lines.push(line)
   return lines
 }
 
@@ -300,11 +303,13 @@ export function createBoard(nodes: BoardNode[], edges: BoardEdge[], insert?: Boa
  */
 export function editBoard(text: string, edit: BoardEdit): string {
   let els = elementsOf(text)
-  const find = (id: string) => {
-    const i = els.findIndex((e) => e.id === id && !e.isDeleted)
-    if (i === -1) throw new Error(`no element "${id}" on the board`)
-    return i
+  /** Where each element still on the board sits, by id. */
+  const liveIndex = () => {
+    const at = new Map<string, number>()
+    els.forEach((e, i) => !e.isDeleted && at.set(e.id, i))
+    return at
   }
+  const missing = (id: string) => new Error(`no element "${id}" on the board`)
   const bump = (e: El, patch: Record<string, unknown>): El => ({ ...e, ...patch, version: num(e.version) + 1, versionNonce: seed(), updated: Date.now() })
 
   const remove = edit.remove ?? []
@@ -312,7 +317,8 @@ export function editBoard(text: string, edit: BoardEdit): string {
     // Every id is checked against the board as it was, before anything goes:
     // removing a shape takes its arrows too, and the same edit naming one of
     // those arrows is clearing the board, not a stale reference.
-    for (const id of remove) find(id)
+    const at = liveIndex()
+    for (const id of remove) if (!at.has(id)) throw missing(id)
     const gone = new Set(remove)
     const boundTo = (b: unknown) => (b && typeof b === 'object' ? (b as { elementId?: unknown }).elementId : undefined)
     for (const e of els) {
@@ -322,10 +328,14 @@ export function editBoard(text: string, edit: BoardEdit): string {
     els = els.map((e) => (!e.isDeleted && (gone.has(e.id) || (typeof e.containerId === 'string' && gone.has(e.containerId))) ? bump(e, { isDeleted: true }) : e))
   }
 
+  const at = liveIndex()
+  const labelAt = new Map<string, number>()
+  els.forEach((e, i) => !e.isDeleted && typeof e.containerId === 'string' && labelAt.set(e.containerId, i))
   for (const { id, text: label } of edit.relabel ?? []) {
-    const i = find(id)
+    const i = at.get(id)
+    if (i === undefined) throw missing(id)
     const target = els[i]
-    const boundIdx = target.type === 'text' ? i : els.findIndex((e) => e.containerId === id && !e.isDeleted)
+    const boundIdx = target.type === 'text' ? i : (labelAt.get(id) ?? -1)
     if (boundIdx !== -1) {
       const t = els[boundIdx]
       const lines = wrap(label)
@@ -333,6 +343,7 @@ export function editBoard(text: string, edit: BoardEdit): string {
     } else {
       const added = boundText(target, label)
       els[i] = bind(target, { type: 'text', id: added.id })
+      labelAt.set(id, els.length)
       els.push(added)
     }
   }

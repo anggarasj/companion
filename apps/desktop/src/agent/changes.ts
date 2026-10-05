@@ -29,11 +29,8 @@ export function pathProblem(path: unknown, kind: keyof typeof KIND = 'note'): st
   return null
 }
 
-const count = (hay: string, needle: string): number => {
-  let n = 0
-  for (let i = hay.indexOf(needle); i !== -1; i = hay.indexOf(needle, i + needle.length)) n++
-  return n
-}
+/** Non-overlapping occurrences of `needle` in `hay`. */
+const count = (hay: string, needle: string): number => hay.split(needle).length - 1
 
 /** Replace the one occurrence — by slicing, so `$&` in the text stays text. */
 const replaceOnce = (body: string, oldText: string, newText: string): string => {
@@ -90,6 +87,107 @@ function boardEdit(c: Record<string, unknown>): BoardEdit | string {
   return { add: parts, relabel: relabel as BoardEdit['relabel'], remove: remove as string[] }
 }
 
+interface Staging {
+  c: Record<string, unknown>
+  /** The raw change, which is what converted Mermaid is keyed by. */
+  item: unknown
+  path: string
+  ctx: StageContext
+  /** Paths already being created in this set, lowercased. */
+  creating: Set<string>
+}
+/** A staged change, or why it was refused. */
+type Staged = StagedChange | string
+
+const taken = (s: Staging) => s.ctx.exists(s.path) || s.creating.has(s.path.toLowerCase())
+
+/** Mermaid only ever becomes elements through the converter; elements the model sends itself are not looked at. */
+function fromMermaid(s: Staging, def: unknown): BoardInsert | string | undefined {
+  if (def === undefined) return undefined
+  if (!str(def) || !def.trim()) return 'mermaid must be a diagram definition'
+  if (def.length > MAX_MERMAID) return `mermaid longer than ${MAX_MERMAID} characters`
+  const done = s.ctx.converted?.get(s.item)
+  if (done === undefined) return 'Mermaid cannot be converted here'
+  return typeof done === 'string' ? `mermaid: ${done}` : done
+}
+
+/** Run a board builder, turning what it throws into a refusal. */
+function build(make: () => string): string | { preview: string } {
+  try {
+    return { preview: make() }
+  } catch (e) {
+    return (e as Error).message
+  }
+}
+
+function stageCreateBoard(s: Staging): Staged {
+  const insert = fromMermaid(s, s.c.mermaid)
+  if (typeof insert === 'string') return insert
+  const parts = insert ? { nodes: [], edges: [] } : boardParts(s.c.nodes, s.c.edges)
+  if (typeof parts === 'string') return parts
+  if (!insert && !parts.nodes.length) return 'create_board needs at least one node, or mermaid'
+  if (taken(s)) return 'a file already exists at this path'
+  const built = build(() => createBoard(parts.nodes, parts.edges, insert))
+  if (typeof built === 'string') return built
+  return { type: 'create_board', path: s.path, ...parts, ...(insert ? { insert } : {}), id: nextId(), base: null, preview: built.preview, view: { before: '', after: boardOutline(built.preview) } }
+}
+
+function stageEditBoard(s: Staging): Staged {
+  const read = s.ctx.reads.get(s.path)
+  if (!read) return 'the agent did not read this board before changing it'
+  const edit = boardEdit(s.c)
+  if (typeof edit === 'string') return edit
+  const insert = fromMermaid(s, (s.c.add as Record<string, unknown> | undefined)?.mermaid)
+  if (typeof insert === 'string') return insert
+  if (insert) edit.insert = insert
+  const built = build(() => editBoard(read.body, edit))
+  if (typeof built === 'string') return built
+  return { type: 'edit_board', path: s.path, edit, id: nextId(), base: read.body, preview: built.preview, view: { before: boardOutline(read.body), after: boardOutline(built.preview) } }
+}
+
+function stageCreateNote(s: Staging): Staged {
+  const { c } = s
+  if (!str(c.title) || !c.title.trim() || !str(c.body)) return 'create_note needs a title and a body'
+  if (taken(s)) return 'a note already exists at this path'
+  return { type: 'create_note', path: s.path, title: c.title.trim(), body: c.body, id: nextId(), base: null, preview: c.body }
+}
+
+/** The edit itself, computed against the body the agent read. */
+function noteEdit(c: Record<string, unknown>, path: string, base: string): { change: ProposedChange; preview: string } | string {
+  if (c.type === 'replace_text') {
+    if (!str(c.oldText) || !c.oldText || !str(c.newText) || c.oldText === c.newText) return 'replace_text needs oldText and a different newText'
+    const n = count(base, c.oldText)
+    if (n !== 1) return n === 0 ? 'oldText is not in the note' : 'oldText appears more than once'
+    return { change: { type: 'replace_text', path, oldText: c.oldText, newText: c.newText }, preview: replaceOnce(base, c.oldText, c.newText) }
+  }
+  if (c.type === 'append_section') {
+    if (!str(c.markdown) || !c.markdown.trim()) return 'append_section needs markdown'
+    return { change: { type: 'append_section', path, markdown: c.markdown }, preview: appendTo(base, c.markdown) }
+  }
+  if (!str(c.body) || !c.body.trim()) return 'replace_body needs a non-empty body'
+  return { change: { type: 'replace_body', path, body: c.body }, preview: c.body }
+}
+
+function stageNoteEdit(s: Staging): Staged {
+  const read = s.ctx.reads.get(s.path)
+  if (!read) return 'the agent did not read this note before changing it'
+  // A delivered meeting is an archive. The open one is fine: the editor
+  // saves an edit of it as a copy, which is the app's own rule.
+  if (read.platform && read.platform !== 'manual' && s.path !== s.ctx.currentPath) return 'delivered meetings are archives and are never rewritten'
+  const edit = noteEdit(s.c, s.path, read.body)
+  if (typeof edit === 'string') return edit
+  return { ...edit.change, id: nextId(), base: read.body, preview: edit.preview }
+}
+
+const STAGERS = new Map<unknown, (s: Staging) => Staged>([
+  ['create_board', stageCreateBoard],
+  ['edit_board', stageEditBoard],
+  ['create_note', stageCreateNote],
+  ['replace_text', stageNoteEdit],
+  ['append_section', stageNoteEdit],
+  ['replace_body', stageNoteEdit],
+])
+
 /** Validate raw proposed changes. Anything malformed is refused, not repaired. */
 export function stageChanges(raw: unknown[], ctx: StageContext): { staged: StagedChange[]; rejected: { path: string; reason: string }[] } {
   const staged: StagedChange[] = []
@@ -98,140 +196,17 @@ export function stageChanges(raw: unknown[], ctx: StageContext): { staged: Stage
   for (const item of raw) {
     const c = item as Record<string, unknown>
     const path = str(c.path) ? c.path : ''
-    const refuse = (reason: string) => rejected.push({ path, reason })
     const onBoard = c.type === 'create_board' || c.type === 'edit_board'
     // The open note may be an unsaved draft, addressed by a placeholder path.
     const problem = path && path === ctx.currentPath && !onBoard ? null : pathProblem(c.path, onBoard ? 'board' : 'note')
-    if (problem) {
-      refuse(problem)
+    const stage = STAGERS.get(c.type)
+    const out = problem ?? (stage ? stage({ c, item, path, ctx, creating }) : `unknown change type ${JSON.stringify(c.type)}`)
+    if (typeof out === 'string') {
+      rejected.push({ path, reason: out })
       continue
     }
-    // Mermaid only ever becomes elements through the converter; elements
-    // the model sends itself are not looked at.
-    const fromMermaid = (def: unknown): BoardInsert | string | undefined => {
-      if (def === undefined) return undefined
-      if (!str(def) || !def.trim()) return 'mermaid must be a diagram definition'
-      if (def.length > MAX_MERMAID) return `mermaid longer than ${MAX_MERMAID} characters`
-      const done = ctx.converted?.get(item)
-      if (done === undefined) return 'Mermaid cannot be converted here'
-      return typeof done === 'string' ? `mermaid: ${done}` : done
-    }
-    if (c.type === 'create_board') {
-      const insert = fromMermaid(c.mermaid)
-      if (typeof insert === 'string') {
-        refuse(insert)
-        continue
-      }
-      const parts = insert ? { nodes: [], edges: [] } : boardParts(c.nodes, c.edges)
-      if (typeof parts === 'string') {
-        refuse(parts)
-        continue
-      }
-      if (!insert && !parts.nodes.length) {
-        refuse('create_board needs at least one node, or mermaid')
-        continue
-      }
-      if (ctx.exists(path) || creating.has(path.toLowerCase())) {
-        refuse('a file already exists at this path')
-        continue
-      }
-      let preview: string
-      try {
-        preview = createBoard(parts.nodes, parts.edges, insert)
-      } catch (e) {
-        refuse((e as Error).message)
-        continue
-      }
-      creating.add(path.toLowerCase())
-      staged.push({ type: 'create_board', path, ...parts, ...(insert ? { insert } : {}), id: nextId(), base: null, preview, view: { before: '', after: boardOutline(preview) } })
-      continue
-    }
-    if (c.type === 'edit_board') {
-      const read = ctx.reads.get(path)
-      if (!read) {
-        refuse('the agent did not read this board before changing it')
-        continue
-      }
-      const edit = boardEdit(c)
-      if (typeof edit === 'string') {
-        refuse(edit)
-        continue
-      }
-      const insert = fromMermaid((c.add as Record<string, unknown> | undefined)?.mermaid)
-      if (typeof insert === 'string') {
-        refuse(insert)
-        continue
-      }
-      if (insert) edit.insert = insert
-      let preview: string
-      try {
-        preview = editBoard(read.body, edit)
-      } catch (e) {
-        refuse((e as Error).message)
-        continue
-      }
-      staged.push({ type: 'edit_board', path, edit, id: nextId(), base: read.body, preview, view: { before: boardOutline(read.body), after: boardOutline(preview) } })
-      continue
-    }
-    if (c.type === 'create_note') {
-      if (!str(c.title) || !c.title.trim() || !str(c.body)) {
-        refuse('create_note needs a title and a body')
-        continue
-      }
-      if (ctx.exists(path) || creating.has(path.toLowerCase())) {
-        refuse('a note already exists at this path')
-        continue
-      }
-      creating.add(path.toLowerCase())
-      staged.push({ type: 'create_note', path, title: c.title.trim(), body: c.body, id: nextId(), base: null, preview: c.body })
-      continue
-    }
-    if (!['replace_text', 'append_section', 'replace_body'].includes(c.type as string)) {
-      refuse(`unknown change type ${JSON.stringify(c.type)}`)
-      continue
-    }
-    const read = ctx.reads.get(path)
-    if (!read) {
-      refuse('the agent did not read this note before changing it')
-      continue
-    }
-    // A delivered meeting is an archive. The open one is fine: the editor
-    // saves an edit of it as a copy, which is the app's own rule.
-    if (read.platform && read.platform !== 'manual' && path !== ctx.currentPath) {
-      refuse('delivered meetings are archives and are never rewritten')
-      continue
-    }
-    const base = read.body
-    let change: ProposedChange
-    let preview: string
-    if (c.type === 'replace_text') {
-      if (!str(c.oldText) || !c.oldText || !str(c.newText) || c.oldText === c.newText) {
-        refuse('replace_text needs oldText and a different newText')
-        continue
-      }
-      const n = count(base, c.oldText)
-      if (n !== 1) {
-        refuse(n === 0 ? 'oldText is not in the note' : 'oldText appears more than once')
-        continue
-      }
-      change = { type: 'replace_text', path, oldText: c.oldText, newText: c.newText }
-      preview = replaceOnce(base, c.oldText, c.newText)
-    } else if (c.type === 'append_section') {
-      if (!str(c.markdown) || !c.markdown.trim()) {
-        refuse('append_section needs markdown')
-        continue
-      }
-      change = { type: 'append_section', path, markdown: c.markdown }
-      preview = appendTo(base, c.markdown)
-    } else {
-      if (!str(c.body) || !c.body.trim()) {
-        refuse('replace_body needs a non-empty body')
-        continue
-      }
-      change = { type: 'replace_body', path, body: c.body }
-      preview = c.body
-    }
-    staged.push({ ...change, id: nextId(), base, preview })
+    staged.push(out)
+    if (out.base === null) creating.add(path.toLowerCase())
   }
   return { staged, rejected }
 }

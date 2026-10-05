@@ -45,6 +45,9 @@ const SCOPES: { value: Scope; label: MessageKey }[] = [
   { value: 'files', label: 'desktop.composer.scope.files' },
 ]
 
+/** A path under a dot folder, which the tree hides. */
+const HIDDEN = /(^|\/)\./
+
 /** Rows the file picker renders at once; the filter narrows the rest. */
 const PICKER_ROWS = 200
 
@@ -125,10 +128,11 @@ export function AIComposer(props: ComposerProps) {
         let found: { path: string; title: string; body: string }[] = []
         if (useNotes && scope === 'files') {
           // Picked by hand is a hard override: exactly these, nothing searched.
-          found = await Promise.all(picked.map(async (path) => {
+          // One at a time: each read is a round trip through Rust, and a long pick list should not flood it.
+          for (const path of picked) {
             const n = await vault.readNote(path)
-            return { path, title: n.title || path, body: n.body }
-          }))
+            found.push({ path, title: n.title || path, body: n.body })
+          }
         } else if (useNotes) {
           setBusy(t('desktop.composer.finding'))
           found = await gatherSources({
@@ -184,8 +188,11 @@ export function AIComposer(props: ComposerProps) {
     }
   }
 
-  const q = filter.trim().toLowerCase()
-  const pickable = props.notePaths.filter((p) => !p.split('/').some((s) => s.startsWith('.')) && (!q || p.toLowerCase().includes(q)))
+  // Dot folders are hidden from the tree, so from the picker too; the filter matches anywhere in the path.
+  const match = new RegExp(filter.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
+  const pickable = props.notePaths.filter((p) => !HIDDEN.test(p) && match.test(p))
+  const pickedSet = new Set(picked)
+  const togglePick = (p: string, on: boolean) => setPicked(on ? [...picked, p] : picked.filter((x) => x !== p))
 
   const hint = 'm-0 text-muted-foreground'
   const check = 'flex items-center gap-[7px] [&>input]:accent-primary'
@@ -335,8 +342,8 @@ export function AIComposer(props: ComposerProps) {
                         <label key={p} className={cn(check, 'min-w-0')}>
                           <input
                             type="checkbox"
-                            checked={picked.includes(p)}
-                            onChange={(e) => setPicked(e.target.checked ? [...picked, p] : picked.filter((x) => x !== p))}
+                            checked={pickedSet.has(p)}
+                            onChange={(e) => togglePick(p, e.target.checked)}
                           />
                           <span className="truncate font-mono text-xs">{p}</span>
                         </label>

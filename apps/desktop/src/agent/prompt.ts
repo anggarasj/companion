@@ -82,6 +82,12 @@ export interface TurnInput {
   correction?: string
 }
 
+/** One earlier exchange as data, with the paths of the documents it showed. */
+function turnData(t: AgentTurn) {
+  const documents = t.refs.map((r) => r.path)
+  return { user: t.request, assistant: t.reply, ...(documents.length ? { documents } : {}) }
+}
+
 export function buildTurn(input: TurnInput): string {
   const history = compactHistory(input.history)
   const refs = [...history].reverse().find((t) => t.refs.length)?.refs ?? []
@@ -90,7 +96,7 @@ export function buildTurn(input: TurnInput): string {
     parts.push(
       block(
         'conversation',
-        history.map((t) => ({ user: t.request, assistant: t.reply, ...(t.refs.length ? { documents: t.refs.map((r) => r.path) } : {}) })),
+        history.map(turnData),
       ),
     )
   }

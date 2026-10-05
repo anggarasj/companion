@@ -7,7 +7,7 @@ import { uuidV7, type Vault, type VaultIndexRow, type VaultNote } from '@meetcc/
 import { boardOutline, isBoard, type BoardInsert } from '../board'
 import { excerpt, folderOf, inScope, MAX_SEARCH_RESULTS, rankHits } from './context'
 import { pathProblem } from './changes'
-import { TOOL_NAMES, type AgentScope, type AgentToolCall, type ChangeTarget, type CurrentDoc, type ToolName, type Workspace } from './types'
+import { TOOL_NAMES, type AgentScope, type AgentToolCall, type ChangeTarget, type CurrentDoc, type SearchHit, type ToolName, type Workspace } from './types'
 
 /** Placeholder path for an open note that has no file yet. */
 export const UNSAVED_DOC = '@current'
@@ -28,111 +28,140 @@ export interface ToolOutcome {
 
 /** Identity of a call, for refusing the same call twice in one run. */
 export function callKey(call: AgentToolCall): string {
-  const args = Object.keys(call.args)
-    .sort()
-    .map((k) => [k, call.args[k]])
-  return `${call.tool}:${JSON.stringify(args)}`
+  const keys = Object.keys(call.args)
+  keys.sort()
+  return `${call.tool}:${JSON.stringify(keys.map((k) => [k, call.args[k]]))}`
 }
 
 const folderProblem = (folder: string): string | null =>
   folder === '' ? null : pathProblem(`${folder.replace(/\/+$/, '')}/x.md`)
 
-export async function runTool(call: AgentToolCall, ws: Workspace, scope: AgentScope, state: ToolState): Promise<ToolOutcome> {
+/** A pattern matching a path that contains any word of `query` longer than one character. */
+export function nameMatcher(query: string): RegExp | null {
+  const terms = query.toLowerCase().split(/\s+/).filter((w) => w.length > 1)
+  return terms.length ? new RegExp(terms.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'i') : null
+}
+
+/** What every tool handler works from. */
+interface ToolCtx {
+  ws: Workspace
+  a: Record<string, unknown>
+  state: ToolState
+  visible: (path: string) => boolean
+}
+type Handler = (c: ToolCtx) => Promise<ToolOutcome> | ToolOutcome
+
+const trimFolder = (v: unknown) => (typeof v === 'string' ? v.replace(/^\/+|\/+$/g, '') : '')
+const part = (text: string, offset: unknown) => {
+  const p = excerpt(text, Number(offset) || 0)
+  return { content: p.text, ...(p.truncated ? { truncated: true, nextOffset: p.nextOffset } : {}) }
+}
+
+const searchVault: Handler = ({ ws, a, visible }) => {
+  const tool = 'search_vault'
+  const query = typeof a.query === 'string' ? a.query.trim() : ''
+  if (!query) return { result: { error: 'query is required' }, activity: { tool, detail: '' } }
+  const folder = trimFolder(a.folder)
+  const problem = folderProblem(folder)
+  if (problem) return { result: { error: `folder: ${problem}` }, activity: { tool, detail: query } }
+  const limit = Math.max(1, Math.min(MAX_SEARCH_RESULTS, Number(a.limit) || MAX_SEARCH_RESULTS))
+  const fits = (p: string) => visible(p) && (!folder || p.startsWith(`${folder}/`))
+  const hits = ws.search(query).filter((h) => !pathProblem(h.path) && fits(h.path))
+  // ponytail: boards and PDFs are not in the full-text index, so they match
+  // on their file name only; index their text if that proves too little.
+  const named: SearchHit[] = []
+  const matches = nameMatcher(query)
+  for (const p of matches ? ws.files() : []) if (fits(p) && matches?.test(p)) named.push({ path: p, title: p.split('/').pop() ?? p, updatedAt: '' })
+  const results = [...rankHits(hits, query, ws.current ? folderOf(ws.current.path) : undefined), ...named].slice(0, limit)
+  return { result: { query, results, ...(results.length ? {} : { note: 'no matching notes in scope' }) }, activity: { tool, detail: query } }
+}
+
+const listFolder: Handler = ({ ws, a, visible }) => {
+  const tool = 'list_folder'
+  const folder = trimFolder(a.path)
+  const problem = folderProblem(folder)
+  if (problem) return { result: { error: `path: ${problem}` }, activity: { tool, detail: folder } }
+  const prefix = folder ? `${folder}/` : ''
+  const notes: string[] = []
+  const files: string[] = []
+  const subfolders = new Set<string>()
+  const place = (p: string, here: string[]) => {
+    if (!visible(p) || !p.startsWith(prefix)) return
+    const rest = p.slice(prefix.length)
+    const slash = rest.indexOf('/')
+    if (slash === -1) here.push(p)
+    else subfolders.add(rest.slice(0, slash))
+  }
+  for (const p of ws.paths()) place(p, notes)
+  for (const p of ws.files()) place(p, files)
+  return {
+    result: {
+      path: folder,
+      notes: notes.slice(0, LIST_LIMIT),
+      ...(files.length ? { files: files.slice(0, LIST_LIMIT) } : {}),
+      subfolders: [...subfolders],
+      ...(notes.length > LIST_LIMIT ? { more: notes.length - LIST_LIMIT } : {}),
+    },
+    activity: { tool, detail: folder || '/' },
+  }
+}
+
+const currentDocument: Handler = ({ ws, state, visible }) => {
+  const tool = 'get_current_document'
   const current = ws.current
-  const visible = (path: string) => inScope(path, scope, current?.path)
-  const known = () => ws.paths().filter(visible)
-  const tool = (TOOL_NAMES as readonly string[]).includes(call.tool) ? (call.tool as ToolName) : null
-  const a = call.args
-
-  if (!tool) {
-    return { result: { error: `unknown tool "${call.tool}"; available: ${TOOL_NAMES.join(', ')}` }, activity: { tool: 'unknown', detail: call.tool } }
+  if (!current) return { result: { error: 'no document is open' }, activity: { tool, detail: '' } }
+  if (!visible(current.path)) return { result: { error: 'the open document is outside the scope the user chose' }, activity: { tool, detail: current.title } }
+  state.reads.set(current.path, { title: current.title, body: current.body, platform: current.platform })
+  return {
+    result: { path: current.path, title: current.title, selection: current.selection || undefined, ...part(current.body, 0) },
+    activity: { tool, detail: current.title },
   }
+}
 
-  if (tool === 'search_vault') {
-    const query = typeof a.query === 'string' ? a.query.trim() : ''
-    if (!query) return { result: { error: 'query is required' }, activity: { tool, detail: '' } }
-    const folder = typeof a.folder === 'string' ? a.folder.replace(/^\/+|\/+$/g, '') : ''
-    const problem = folderProblem(folder)
-    if (problem) return { result: { error: `folder: ${problem}` }, activity: { tool, detail: query } }
-    const limit = Math.max(1, Math.min(MAX_SEARCH_RESULTS, Number(a.limit) || MAX_SEARCH_RESULTS))
-    const fits = (p: string) => visible(p) && (!folder || p.startsWith(`${folder}/`))
-    const hits = ws.search(query).filter((h) => !pathProblem(h.path) && fits(h.path))
-    // ponytail: boards and PDFs are not in the full-text index, so they match
-    // on their file name only; index their text if that proves too little.
-    const terms = query.toLowerCase().split(/\s+/).filter((w) => w.length > 1)
-    const named = ws
-      .files()
-      .filter((p) => fits(p) && terms.some((w) => p.toLowerCase().includes(w)))
-      .map((p) => ({ path: p, title: p.split('/').pop() ?? p, updatedAt: '' }))
-    const results = [...rankHits(hits, query, current ? folderOf(current.path) : undefined), ...named].slice(0, limit)
-    return {
-      result: { query, results, ...(results.length ? {} : { note: 'no matching notes in scope' }) },
-      activity: { tool, detail: query },
-    }
-  }
+/** A board (read as its outline) or a PDF (read as text). */
+async function readFileTool({ ws, a, state }: ToolCtx, path: string): Promise<ToolOutcome> {
+  const tool = 'read_note'
+  if (!ws.files().includes(path)) return { result: { path, error: 'no such file' }, activity: { tool, detail: path } }
+  const text = await ws.readFile(path)
+  if (text === null) return { result: { path, error: 'could not be read' }, activity: { tool, detail: path } }
+  const name = path.split('/').pop() ?? path
+  // A board is kept whole as the base its edits are checked against; the
+  // model reads its outline. A PDF is read-only text.
+  state.reads.set(path, { title: name, body: text })
+  const board = isBoard(path)
+  return { result: { path, kind: board ? 'board' : 'pdf', title: name, ...part(board ? boardOutline(text) : text, a.offset) }, activity: { tool, detail: name } }
+}
 
-  if (tool === 'list_folder') {
-    const folder = typeof a.path === 'string' ? a.path.replace(/^\/+|\/+$/g, '') : ''
-    const problem = folderProblem(folder)
-    if (problem) return { result: { error: `path: ${problem}` }, activity: { tool, detail: folder } }
-    const under = known().filter((p) => (folder ? p.startsWith(`${folder}/`) : true))
-    const files = ws.files().filter((p) => visible(p) && (folder ? p.startsWith(`${folder}/`) : true))
-    const notes = under.filter((p) => folderOf(p) === folder)
-    const subfolders = [...new Set([...under, ...files].map((p) => p.slice(folder ? folder.length + 1 : 0).split('/')).filter((s) => s.length > 1).map((s) => s[0]))]
-    const here = files.filter((p) => folderOf(p) === folder)
-    return {
-      result: {
-        path: folder,
-        notes: notes.slice(0, LIST_LIMIT),
-        ...(here.length ? { files: here.slice(0, LIST_LIMIT) } : {}),
-        subfolders,
-        ...(notes.length > LIST_LIMIT ? { more: notes.length - LIST_LIMIT } : {}),
-      },
-      activity: { tool, detail: folder || '/' },
-    }
-  }
-
-  if (tool === 'get_current_document') {
-    if (!current) return { result: { error: 'no document is open' }, activity: { tool, detail: '' } }
-    if (!visible(current.path)) return { result: { error: 'the open document is outside the scope the user chose' }, activity: { tool, detail: current.title } }
-    state.reads.set(current.path, { title: current.title, body: current.body, platform: current.platform })
-    const part = excerpt(current.body)
-    return {
-      result: { path: current.path, title: current.title, selection: current.selection || undefined, content: part.text, ...(part.truncated ? { truncated: true, nextOffset: part.nextOffset } : {}) },
-      activity: { tool, detail: current.title },
-    }
-  }
-
-  // read_note
+const readNoteTool: Handler = async (c) => {
+  const tool = 'read_note'
+  const { ws, a, state, visible } = c
+  const current = ws.current
   const path = typeof a.path === 'string' ? a.path.trim() : ''
   const isCurrent = Boolean(current && path === current.path)
   const problem = isCurrent ? null : pathProblem(path, 'read')
   if (problem) return { result: { path, error: problem }, activity: { tool, detail: path } }
   if (!visible(path)) return { result: { path, error: 'outside the scope the user chose' }, activity: { tool, detail: path } }
-  if (!isCurrent && !/\.md$/i.test(path)) {
-    if (!ws.files().includes(path)) return { result: { path, error: 'no such file' }, activity: { tool, detail: path } }
-    const text = await ws.readFile(path)
-    if (text === null) return { result: { path, error: 'could not be read' }, activity: { tool, detail: path } }
-    const name = path.split('/').pop() ?? path
-    // A board is kept whole as the base its edits are checked against; the
-    // model reads its outline. A PDF is read-only text.
-    state.reads.set(path, { title: name, body: text })
-    const shown = isBoard(path) ? boardOutline(text) : text
-    const part = excerpt(shown, Number(a.offset) || 0)
-    return {
-      result: { path, kind: isBoard(path) ? 'board' : 'pdf', title: name, content: part.text, ...(part.truncated ? { truncated: true, nextOffset: part.nextOffset } : {}) },
-      activity: { tool, detail: name },
-    }
-  }
+  if (!isCurrent && !/\.md$/i.test(path)) return readFileTool(c, path)
   if (!isCurrent && !ws.paths().includes(path)) return { result: { path, error: 'no such note' }, activity: { tool, detail: path } }
   const note = isCurrent && current ? { title: current.title, body: current.body, platform: current.platform } : await ws.read(path)
   if (!note) return { result: { path, error: 'no such note' }, activity: { tool, detail: path } }
   state.reads.set(path, note)
-  const part = excerpt(note.body, Number(a.offset) || 0)
-  return {
-    result: { path, title: note.title, content: part.text, ...(part.truncated ? { truncated: true, nextOffset: part.nextOffset } : {}) },
-    activity: { tool, detail: note.title || path },
+  return { result: { path, title: note.title, ...part(note.body, a.offset) }, activity: { tool, detail: note.title || path } }
+}
+
+const HANDLERS = new Map<unknown, Handler>([
+  ['search_vault', searchVault],
+  ['read_note', readNoteTool],
+  ['list_folder', listFolder],
+  ['get_current_document', currentDocument],
+])
+
+export async function runTool(call: AgentToolCall, ws: Workspace, scope: AgentScope, state: ToolState): Promise<ToolOutcome> {
+  const handler = HANDLERS.get(call.tool)
+  if (!handler) {
+    return { result: { error: `unknown tool "${call.tool}"; available: ${TOOL_NAMES.join(', ')}` }, activity: { tool: 'unknown', detail: call.tool } }
   }
+  return handler({ ws, a: call.args, state, visible: (path) => inScope(path, scope, ws.current?.path) })
 }
 
 /** The open note as the agent sees it: live editor content, not the file. */
@@ -226,10 +255,10 @@ export function vaultWorkspace(opts: {
         }
       }
       // ponytail: no index, so paths stand in for titles; fine as a fallback.
-      const terms = query.toLowerCase().split(/\s+/).filter((w) => w.length > 1)
-      return opts.paths
-        .filter((p) => terms.some((w) => p.toLowerCase().includes(w)))
-        .map((p) => ({ path: p, title: p.split('/').pop()?.replace(/\.md$/i, '') ?? p, updatedAt: '' }))
+      const matches = nameMatcher(query)
+      const hits: SearchHit[] = []
+      for (const p of matches ? opts.paths : []) if (matches?.test(p)) hits.push({ path: p, title: p.split('/').pop()?.replace(/\.md$/i, '') ?? p, updatedAt: '' })
+      return hits
     },
     read: async (path) => {
       if (isOpen(path) && current) return { title: current.title, body: current.body, platform: current.platform }

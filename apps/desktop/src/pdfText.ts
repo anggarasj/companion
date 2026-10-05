@@ -6,6 +6,13 @@ import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 /** Pages read at most; a scanned 900-page manual is not context. */
 const MAX_PAGES = 200
 
+/** A page's text items as lines: pdf.js marks where a line ends. */
+function itemsText(items: ({ str: string; hasEOL: boolean } | object)[]): string {
+  let text = ''
+  for (const item of items) if ('str' in item) text += item.str + (item.hasEOL ? '\n' : ' ')
+  return text.replace(/[ \t]+\n/g, '\n').trim()
+}
+
 export async function pdfText(bytes: ArrayBuffer | Uint8Array, maxPages = MAX_PAGES): Promise<string> {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
   // In the WebView the worker is a bundled file ('self' under the CSP); under
@@ -20,12 +27,7 @@ export async function pdfText(bytes: ArrayBuffer | Uint8Array, maxPages = MAX_PA
     const last = Math.min(pdf.numPages, maxPages)
     for (let i = 1; i <= last; i++) {
       const content = await (await pdf.getPage(i)).getTextContent()
-      const text = content.items
-        .map((item) => ('str' in item ? item.str + (item.hasEOL ? '\n' : ' ') : ''))
-        .join('')
-        .replace(/[ \t]+\n/g, '\n')
-        .trim()
-      pages.push(`[page ${i}]\n${text}`)
+      pages.push(`[page ${i}]\n${itemsText(content.items)}`)
     }
     if (pdf.numPages > last) pages.push(`[${pdf.numPages - last} more pages not read]`)
     return pages.join('\n\n')
