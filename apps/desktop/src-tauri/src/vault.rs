@@ -679,7 +679,10 @@ mod tests {
         assert_eq!(names.len(), 2);
         assert_eq!(names[1], "Board.excalidraw");
         assert!(names[0].starts_with("Board-"), "{names:?}");
-        assert!(names.iter().all(|n| n.ends_with(".excalidraw")), "{names:?}");
+        assert!(
+            names.iter().all(|n| n.ends_with(".excalidraw")),
+            "{names:?}"
+        );
         assert!(!root.join("a/Board.excalidraw").exists());
         assert!(trash_file(&root, "../outside.md").is_err());
     }

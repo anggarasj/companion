@@ -319,6 +319,8 @@ const A4_H_MM = 297
 const MARGIN_MM = 16
 /** The width, in CSS px, the page is laid out at before it is scaled onto A4. */
 const PAGE_PX = 720
+/** Tallest stretch, in CSS px, drawn onto one canvas: 720×2 by 5000×2 is ~14.4M px. */
+const CHUNK_PX = 5000
 /** Blocks a page may end after; see `pageBreaks`. */
 const BLOCKS = '.container > *, .content > *, .content li, .content tr, .property-row'
 
@@ -350,25 +352,45 @@ export async function buildExportPdf(
     const body = doc.body
     frame.style.height = `${body.scrollHeight}px`
     const { default: html2canvas } = await import('html2canvas')
-    const scale = 2
-    const canvas = await html2canvas(body, { scale, backgroundColor: '#ffffff', logging: false, windowWidth: PAGE_PX })
 
     const mmPerPx = (A4_W_MM - 2 * MARGIN_MM) / PAGE_PX
     const top = body.getBoundingClientRect().top
     const bottoms = [...body.querySelectorAll(BLOCKS)].map((el) => el.getBoundingClientRect().bottom - top)
-    const ends = pageBreaks(bottoms, canvas.height / scale, (A4_H_MM - 2 * MARGIN_MM) / mmPerPx)
+    const ends = pageBreaks(bottoms, body.scrollHeight, (A4_H_MM - 2 * MARGIN_MM) / mmPerPx)
 
+    // Drawn a few pages at a time, never the whole document at once: past a
+    // browser's canvas size limit a canvas silently draws nothing, which turned
+    // a long note into a PDF of blank pages. A chunk stays under 16.7M device
+    // pixels, WebKit's tightest limit; html2canvas re-clones the document per
+    // call, so chunks rather than single pages keep a long export bearable.
+    // ponytail: ~2 min for a 116-page note in Chrome; render off the main thread if that ever matters.
+    const scale = 2
     const pdf = new jsPDF({ unit: 'mm', format: 'a4', compress: true })
     let from = 0
-    ends.forEach((end, page) => {
-      if (page) pdf.addPage()
-      const slice = document.createElement('canvas')
-      slice.width = canvas.width
-      slice.height = Math.ceil((end - from) * scale)
-      slice.getContext('2d')?.drawImage(canvas, 0, -Math.floor(from * scale))
-      pdf.addImage(slice, 'PNG', MARGIN_MM, MARGIN_MM, A4_W_MM - 2 * MARGIN_MM, (end - from) * mmPerPx)
-      from = end
-    })
+    let page = 0
+    while (page < ends.length) {
+      let last = page
+      while (last + 1 < ends.length && ends[last + 1] - from <= CHUNK_PX) last++
+      const chunk = await html2canvas(body, {
+        scale,
+        backgroundColor: '#ffffff',
+        logging: false,
+        windowWidth: PAGE_PX,
+        y: top + from,
+        height: ends[last] - from,
+      })
+      const chunkFrom = from
+      for (; page <= last; page++) {
+        if (page) pdf.addPage()
+        const end = ends[page]
+        const slice = document.createElement('canvas')
+        slice.width = chunk.width
+        slice.height = Math.ceil((end - from) * scale)
+        slice.getContext('2d')?.drawImage(chunk, 0, -Math.floor((from - chunkFrom) * scale))
+        pdf.addImage(slice, 'PNG', MARGIN_MM, MARGIN_MM, A4_W_MM - 2 * MARGIN_MM, (end - from) * mmPerPx)
+        from = end
+      }
+    }
     return pdf.output('blob')
   } finally {
     frame.remove()
