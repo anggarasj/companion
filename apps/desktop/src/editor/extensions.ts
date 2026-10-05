@@ -124,15 +124,19 @@ const VaultMarkdown = Markdown.extend({
 })
 
 /**
- * `codeBlock` is swappable so the React editor can give code blocks a view
- * (mermaid diagrams) while the round-trip tests run the same node headless —
+ * `codeBlock` and `image` are swappable so the React editor can give them a
+ * view (mermaid diagrams, media players) while the round-trip tests run the
+ * same nodes headless —
  * the node and its markdown are identical either way.
  */
-export function baseExtensions({ codeBlock = CodeBlock as AnyExtension } = {}): AnyExtension[] {
+export function baseExtensions({
+  codeBlock = CodeBlock as AnyExtension,
+  image = Image as AnyExtension,
+}: { codeBlock?: AnyExtension; image?: AnyExtension } = {}): AnyExtension[] {
   return [
     StarterKit.configure({
-      // Links are opened deliberately (Cmd-click), never by a stray click
-      // while placing the cursor in a document.
+      // Tiptap would open a clicked link with window.open, which in the Tauri
+      // window goes nowhere; NoteEditor opens it in the system browser instead.
       link: { openOnClick: false, autolink: true },
       // Markdown has no underline; a mark the file cannot carry would vanish
       // on reopen, so it is not offered at all.
@@ -145,7 +149,7 @@ export function baseExtensions({ codeBlock = CodeBlock as AnyExtension } = {}): 
     TaskList,
     TaskItem.configure({ nested: true }),
     TableKit.configure({ table: { resizable: false } }),
-    Image,
+    image,
     VaultMarkdown,
   ]
 }

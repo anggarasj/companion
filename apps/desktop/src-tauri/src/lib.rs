@@ -119,6 +119,7 @@ pub fn run() {
             vault::list_vault_files,
             vault::reveal_vault_file,
             vault::import_vault_asset,
+            vault::write_vault_bytes,
             vault::write_vault_file,
             vault::append_vault_line,
             vault::vault_mtime,

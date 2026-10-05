@@ -206,27 +206,45 @@ fn walk_md(root: &Path, dir: &Path, out: &mut Vec<String>) -> Result<(), String>
 
 /// Image types a note may use as its icon or cover.
 const IMAGE_EXTS: [&str; 6] = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
-/// A cover is a picture, not a video: anything past this is refused.
-const MAX_ASSET_BYTES: u64 = 15 * 1024 * 1024;
+/// Video and audio a note plays inline.
+const MEDIA_EXTS: [&str; 8] = ["mp4", "mov", "m4v", "webm", "mp3", "m4a", "wav", "ogg"];
+/// An attachment travels through IPC in one piece, so it has a ceiling.
+const MAX_ASSET_BYTES: u64 = 200 * 1024 * 1024;
+/// Where pasted, dropped and picked attachments live; a dot folder, so the
+/// sidebar tree leaves it out.
+const ASSETS: &str = ".assets/";
 
-fn is_image(path: &Path) -> bool {
+fn ext_of(path: &Path) -> Option<String> {
     path.extension()
         .and_then(|e| e.to_str())
-        .map(|e| IMAGE_EXTS.contains(&e.to_ascii_lowercase().as_str()))
-        .unwrap_or(false)
+        .map(|e| e.to_ascii_lowercase())
 }
 
-/// Copy an image the user picked in the file dialog into the vault, so a
-/// note's cover or icon travels with the vault instead of pointing at a file
-/// somewhere else on the disk. Bytes only: the name comes from the frontend.
+fn is_image(path: &Path) -> bool {
+    ext_of(path).is_some_and(|e| IMAGE_EXTS.contains(&e.as_str()))
+}
+
+fn is_media(path: &Path) -> bool {
+    ext_of(path).is_some_and(|e| MEDIA_EXTS.contains(&e.as_str()))
+}
+
+/// An attachment keeps its own type and is never a note: a `.md` written
+/// here would join the vault as a note nobody wrote.
+fn attachment_type_ok(dest: &Path) -> bool {
+    ext_of(dest).is_some_and(|e| e != "md")
+}
+
+/// Copy a file the user picked in the file dialog into the vault, so a note's
+/// cover, icon or attachment travels with the vault instead of pointing at a
+/// file somewhere else on the disk. Bytes only: the name comes from the frontend.
 fn import_asset(root: &Path, src: &Path, rel: &str) -> Result<(), String> {
     let dest = resolve(root, rel)?;
-    if !is_image(src) || !is_image(&dest) {
-        return Err("only images can be imported".into());
+    if !attachment_type_ok(&dest) || ext_of(src) != ext_of(&dest) {
+        return Err("an attachment keeps its own type and is never a note".into());
     }
     let meta = fs::metadata(src).map_err(|e| e.to_string())?;
     if !meta.is_file() || meta.len() > MAX_ASSET_BYTES {
-        return Err("not a file, or larger than 15 MB".into());
+        return Err("not a file, or larger than 200 MB".into());
     }
     if dest.exists() {
         return Err(format!("already exists: {rel}"));
@@ -235,6 +253,50 @@ fn import_asset(root: &Path, src: &Path, rel: &str) -> Result<(), String> {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     fs::copy(src, &dest).map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Write a pasted or dropped attachment into `.assets/`. Such a file has no
+/// path the dialog could hand over — a screenshot on the clipboard is only
+/// bytes — so the bytes come over IPC. Never over an existing file.
+fn write_asset(root: &Path, rel: &str, bytes: &[u8]) -> Result<(), String> {
+    if !rel.starts_with(ASSETS) {
+        return Err(format!("attachments go in {ASSETS}"));
+    }
+    let dest = resolve(root, rel)?;
+    if !attachment_type_ok(&dest) {
+        return Err("an attachment keeps its own type and is never a note".into());
+    }
+    if bytes.len() as u64 > MAX_ASSET_BYTES {
+        return Err("larger than 200 MB".into());
+    }
+    if dest.exists() {
+        return Err(format!("already exists: {rel}"));
+    }
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let tmp = dest.with_extension(format!("{}.tmp", std::process::id()));
+    fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, &dest).map_err(|e| e.to_string())
+}
+
+/// The body is the file's raw bytes, not a JSON array of numbers — a video
+/// encoded that way would be several times its own size. The vault path rides
+/// in the `x-vault-rel` header, ASCII because the frontend builds it that way.
+#[tauri::command]
+pub fn write_vault_bytes(
+    state: State<'_, VaultState>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<(), String> {
+    let rel = request
+        .headers()
+        .get("x-vault-rel")
+        .and_then(|v| v.to_str().ok())
+        .ok_or("missing x-vault-rel header")?;
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected raw bytes".into());
+    };
+    write_asset(&root(&state), rel, bytes)
 }
 
 #[tauri::command]
@@ -247,15 +309,10 @@ pub fn import_vault_asset(
 }
 
 fn is_viewable(path: &Path) -> bool {
-    is_image(path)
-        || path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.eq_ignore_ascii_case("pdf"))
-            .unwrap_or(false)
+    is_image(path) || is_media(path) || ext_of(path).is_some_and(|e| e == "pdf")
 }
 
-/// An image or PDF inside the vault, as raw bytes for the WebView to show.
+/// An image, PDF, video or audio file inside the vault, as raw bytes for the WebView to show.
 /// Nothing else: the WebView reads text through `read_vault_file`.
 #[tauri::command]
 pub fn read_vault_bytes(
@@ -264,7 +321,7 @@ pub fn read_vault_bytes(
 ) -> Result<tauri::ipc::Response, String> {
     let path = abs(&state, &rel)?;
     if !is_viewable(&path) {
-        return Err("not an image or PDF".into());
+        return Err("not an image, PDF, video or audio file".into());
     }
     fs::read(path)
         .map(tauri::ipc::Response::new)
@@ -661,6 +718,33 @@ pub async fn export_file(
 mod tests {
     use super::*;
     use std::env;
+
+    #[test]
+    fn write_asset_puts_bytes_in_assets_and_refuses_everything_else() {
+        let root = tmp("write-asset");
+        write_asset(&root, ".assets/clip-1.mp4", b"video").unwrap();
+        assert_eq!(fs::read(root.join(".assets/clip-1.mp4")).unwrap(), b"video");
+        // Never over an existing file, never a note, never outside .assets.
+        assert!(write_asset(&root, ".assets/clip-1.mp4", b"again").is_err());
+        assert_eq!(fs::read(root.join(".assets/clip-1.mp4")).unwrap(), b"video");
+        assert!(write_asset(&root, ".assets/sneaky.md", b"# note").is_err());
+        assert!(write_asset(&root, ".assets/noext", b"x").is_err());
+        assert!(write_asset(&root, "Projects/a.png", b"x").is_err());
+        assert!(write_asset(&root, ".assets/../../outside.png", b"x").is_err());
+    }
+
+    #[test]
+    fn import_asset_takes_any_attachment_of_the_same_type() {
+        let root = tmp("import-any");
+        let outside = tmp("import-any-src");
+        fs::write(outside.join("talk.mov"), b"mov").unwrap();
+        fs::write(outside.join("brief.pdf"), b"pdf").unwrap();
+        import_asset(&root, &outside.join("talk.mov"), ".assets/talk-1.mov").unwrap();
+        import_asset(&root, &outside.join("brief.pdf"), ".assets/brief-1.pdf").unwrap();
+        assert_eq!(fs::read(root.join(".assets/talk-1.mov")).unwrap(), b"mov");
+        // Renaming the type on the way in is refused.
+        assert!(import_asset(&root, &outside.join("talk.mov"), ".assets/talk-2.png").is_err());
+    }
 
     #[test]
     fn trash_file_keeps_the_extension_of_a_non_note_on_collision() {

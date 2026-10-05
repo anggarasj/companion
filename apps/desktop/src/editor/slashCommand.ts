@@ -23,9 +23,11 @@ export interface SlashBridge {
   close(): void
   key(event: KeyboardEvent): boolean
   ai(editor: Editor, kind: 'ask' | 'continue' | 'section' | 'summarize' | 'create'): void
+  /** Pick files and insert them as media at the cursor. */
+  media(editor: Editor): void
 }
 
-export function slashItems(bridge: Pick<SlashBridge, 'ai'>): SlashItem[] {
+export function slashItems(bridge: Pick<SlashBridge, 'ai' | 'media'>): SlashItem[] {
   const chain = (e: Editor, r: Range) => e.chain().focus().deleteRange(r)
   return [
     { id: 'text', group: 'basic', label: 'desktop.slash.text', keywords: 'paragraph teks', run: (e, r) => chain(e, r).setParagraph().run() },
@@ -38,6 +40,7 @@ export function slashItems(bridge: Pick<SlashBridge, 'ai'>): SlashItem[] {
     { id: 'quote', group: 'content', label: 'desktop.slash.quote', keywords: 'quote blockquote kutipan', run: (e, r) => chain(e, r).toggleBlockquote().run() },
     { id: 'code', group: 'content', label: 'desktop.slash.code', keywords: 'code block kode', run: (e, r) => chain(e, r).toggleCodeBlock().run() },
     { id: 'divider', group: 'content', label: 'desktop.slash.divider', keywords: 'divider hr rule garis', run: (e, r) => chain(e, r).setHorizontalRule().run() },
+    { id: 'media', group: 'content', label: 'desktop.slash.media', keywords: 'image picture photo video audio file upload gambar foto berkas lampiran', run: (e, r) => { chain(e, r).run(); bridge.media(e) } },
     { id: 'table', group: 'content', label: 'desktop.slash.table', keywords: 'table tabel grid', run: (e, r) => chain(e, r).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
     { id: 'ask', group: 'ai', label: 'desktop.slash.askAI', keywords: 'ai ask tanya', run: (e, r) => { chain(e, r).run(); bridge.ai(e, 'ask') } },
     { id: 'continue', group: 'ai', label: 'desktop.slash.continue', keywords: 'ai continue lanjut tulis', run: (e, r) => { chain(e, r).run(); bridge.ai(e, 'continue') } },

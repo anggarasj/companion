@@ -11,6 +11,11 @@
 import { EditorContent, ReactNodeViewRenderer, useEditor, useEditorState, type Editor } from '@tiptap/react'
 import { CodeBlock } from '@tiptap/extension-code-block'
 import { CodeBlockView } from './editor/CodeBlockView'
+import Image from '@tiptap/extension-image'
+import { MediaView } from './editor/MediaView'
+import { attachFiles, externalHref, insertMedia, pastedFiles, pickFiles } from './editor/media'
+import { invoke } from '@tauri-apps/api/core'
+import { useToast } from './toast'
 import { BubbleMenu } from '@tiptap/react/menus'
 import { Placeholder } from '@tiptap/extensions'
 import type { SuggestionProps } from '@tiptap/suggestion'
@@ -27,6 +32,7 @@ import {
   List,
   ListOrdered,
   ListTodo,
+  ImagePlus,
   Minus,
   Pilcrow,
   Quote,
@@ -80,6 +86,10 @@ const ViewedCodeBlock = CodeBlock.extend({
   addNodeView: () => ReactNodeViewRenderer(CodeBlockView),
 })
 
+const ViewedImage = Image.extend({
+  addNodeView: () => ReactNodeViewRenderer(MediaView),
+})
+
 const SELECTION_ACTIONS = (Object.keys(ACTIONS) as ActionId[]).filter((a) => ACTIONS[a].scope === 'selection')
 const CURSOR_ACTIONS = (Object.keys(ACTIONS) as ActionId[]).filter((a) => ACTIONS[a].scope !== 'selection')
 
@@ -95,6 +105,7 @@ const SLASH_ICON: Record<string, LucideIcon> = {
   quote: Quote,
   code: CodeXml,
   divider: Minus,
+  media: ImagePlus,
   table: Table,
 }
 
@@ -144,6 +155,8 @@ export function NoteEditor({
   compose.current = onWriteWithAI
 
   const [ai, setAI] = useState<AIState>({ phase: 'idle' })
+  const toast = useToast()
+  const mediaFailed = (message: string) => toast('error', t('desktop.media.failed', { error: message }))
   const abortRef = useRef<AbortController | null>(null)
 
   // The slash plugin is built once and calls back through this, so it always
@@ -186,11 +199,16 @@ export function NoteEditor({
       if (kind === 'summarize') return void runRef.current({ kind: 'action', action: 'summarize', ctx: contextOf(editor, from, to) }, from, to)
       setAI({ phase: 'prompt', from, to, section: kind === 'section' })
     },
+    media: (editor) => {
+      void pickFiles()
+        .then((items) => insertMedia(editor.view, items))
+        .catch((e) => mediaFailed(String(e)))
+    },
   })
 
   const editor = useEditor({
     extensions: [
-      ...baseExtensions({ codeBlock: ViewedCodeBlock }),
+      ...baseExtensions({ codeBlock: ViewedCodeBlock, image: ViewedImage }),
       Placeholder.configure({
         placeholder: ({ editor: e, node }) =>
           e.isEmpty
@@ -217,6 +235,25 @@ export function NoteEditor({
           return true
         }
         return false
+      },
+      // A click on a web link opens it in the system browser, like Notion;
+      // Rust refuses anything that is not http(s), so a note cannot launch files.
+      handleClick: (_view, _pos, event) => {
+        const href = externalHref(event.target)
+        if (!href) return false
+        event.preventDefault()
+        void invoke('open_external', { url: href }).catch((e) => toast('error', String(e)))
+        return true
+      },
+      // Files on the clipboard or dropped from Finder become media; anything
+      // else (text, HTML) falls through to ProseMirror as before.
+      handlePaste: (view, event) => attachFiles(view, pastedFiles(event.clipboardData), mediaFailed),
+      handleDrop: (view, event, _slice, moved) => {
+        if (moved) return false
+        const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos
+        const handled = attachFiles(view, event.dataTransfer?.files, mediaFailed, pos)
+        if (handled) event.preventDefault()
+        return handled
       },
     },
   })
@@ -282,7 +319,8 @@ export function NoteEditor({
         <BubbleMenu
           editor={editor}
           className={cn(POPOVER, 'flex items-center gap-0.5 p-[3px]')}
-          shouldShow={({ editor: e, from, to }) => from !== to && e.isEditable && !e.isActive('codeBlock')}
+          // Text tools only: a selected picture or player gets none of them.
+          shouldShow={({ editor: e, from, to }) => from !== to && e.isEditable && !e.isActive('codeBlock') && !e.isActive('image')}
         >
           <SelectionToolbar editor={editor} onAsk={openAsk} />
         </BubbleMenu>
