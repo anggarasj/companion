@@ -4,19 +4,25 @@
 // Meeting documents go through @meetcc/ai's existing docgen pipeline (context
 // → draft → critique → revise, grounded in the transcript); a custom brief
 // runs through that same pipeline. Without a meeting, the document is written
-// from the prompt plus whatever notes the user ticked — and nothing else: the
-// scope list below is exactly what leaves the machine.
+// from the prompt plus the context ticked below and nothing else: the open
+// note, and either the notes the Vault Agent finds relevant inside the chosen
+// scope or exactly the files picked by hand. Grounded documents are drafted,
+// checked against their sources and revised, and the sources are shown before
+// anything is saved.
 import { useEffect, useRef, useState } from 'react'
 import { generateDoc, DOC_META, type CustomDoc } from '@meetcc/ai'
 import type { DocType } from '@meetcc/shared/types'
 import type { Vault, VaultNote } from '@meetcc/vault'
 import { t, type MessageKey } from '@meetcc/shared/i18n'
-import { FolderInput, Sparkles, Square } from 'lucide-react'
+import { FileText, FolderInput, Sparkles, Square } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { configuredClient } from './aiSettings'
+import { describeActivity, gatherSources } from './agent/runner'
+import type { Workspace } from './agent/types'
 import { abortable, isAbort, splitTitle, writeDocument } from './editor/editorAI'
 import { meetingOf, readTranscript } from './MeetingMeta'
 import { Select } from './Select'
@@ -31,8 +37,22 @@ const KINDS: { value: Kind; label: MessageKey }[] = [
   { value: 'notulen', label: 'desktop.composer.kind.notulen' },
 ]
 
-/** Hard cap on notes read for folder scope, whatever the folder holds. */
-const FOLDER_NOTES = 20
+type Scope = 'folder' | 'vault' | 'files'
+
+const SCOPES: { value: Scope; label: MessageKey }[] = [
+  { value: 'folder', label: 'desktop.composer.scope.folder' },
+  { value: 'vault', label: 'desktop.composer.scope.vault' },
+  { value: 'files', label: 'desktop.composer.scope.files' },
+]
+
+/** Rows the file picker renders at once; the filter narrows the rest. */
+const PICKER_ROWS = 200
+
+interface Ready {
+  title: string
+  body: string
+  sources: { path: string; title: string }[]
+}
 
 export interface ComposerProps {
   vault: Vault
@@ -41,8 +61,10 @@ export interface ComposerProps {
   folder: string
   /** The note on screen, offered as context. */
   current: VaultNote | null
-  /** Vault paths, for the folder scope. */
+  /** Vault paths, for the file picker. */
   notePaths: string[]
+  /** The vault as the agent reads it, for finding relevant notes. */
+  workspace: () => Workspace
   /** Pre-select a document type (from "Generate document" on a meeting). */
   kind?: Kind
   onCreate: (title: string, body: string, folder: string) => Promise<void>
@@ -57,7 +79,11 @@ export function AIComposer(props: ComposerProps) {
   const [folder, setFolder] = useState(props.folder)
   const [useMeeting, setUseMeeting] = useState(isMeeting)
   const [useDoc, setUseDoc] = useState(false)
-  const [useFolder, setUseFolder] = useState(false)
+  const [useNotes, setUseNotes] = useState(true)
+  const [scope, setScope] = useState<Scope>('folder')
+  const [picked, setPicked] = useState<string[]>([])
+  const [filter, setFilter] = useState('')
+  const [ready, setReady] = useState<Ready | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -93,19 +119,41 @@ export function AIComposer(props: ComposerProps) {
         )
         markdown = markdown.startsWith('# ') ? markdown : `# ${fallbackTitle} — ${current.title}\n\n${markdown}`
       } else {
+        const brief = kind === 'custom' ? prompt.trim() : `${DOC_META[kind].label}. ${prompt.trim()}`
         const sources: { title: string; body: string }[] = []
         if (useDoc && current) sources.push({ title: current.title, body: current.body })
-        if (useFolder) {
-          const inFolder = props.notePaths
-            .filter((rel) => (folder ? rel.startsWith(`${folder}/`) : !rel.includes('/')))
-            .slice(0, FOLDER_NOTES)
-          for (const rel of inFolder) {
-            const n = await vault.readNote(rel)
-            if (n.id !== current?.id || !useDoc) sources.push({ title: n.title || rel, body: n.body })
-          }
+        let found: { path: string; title: string; body: string }[] = []
+        if (useNotes && scope === 'files') {
+          // Picked by hand is a hard override: exactly these, nothing searched.
+          found = await Promise.all(picked.map(async (path) => {
+            const n = await vault.readNote(path)
+            return { path, title: n.title || path, body: n.body }
+          }))
+        } else if (useNotes) {
+          setBusy(t('desktop.composer.finding'))
+          found = await gatherSources({
+            client,
+            brief,
+            workspace: props.workspace(),
+            scope: scope === 'folder' ? { kind: 'folder', folder } : { kind: 'vault' },
+            signal: ctrl.signal,
+            onActivity: (a) => !ctrl.signal.aborted && setBusy(describeActivity(a)),
+          })
         }
-        const brief = kind === 'custom' ? prompt.trim() : `${DOC_META[kind].label}. ${prompt.trim()}`
-        markdown = await writeDocument(client, brief, sources, ctrl.signal)
+        // The open note is already in, when ticked; reading it twice wastes budget.
+        found = found.filter((s) => !(useDoc && current && s.title === current.title && s.body === current.body))
+        sources.push(...found)
+        markdown = await writeDocument(client, brief, sources, ctrl.signal, (stage) => {
+          if (!ctrl.signal.aborted) setBusy(t(stage === 'draft' ? 'desktop.ai.writing' : stage === 'review' ? 'desktop.composer.stage.review' : 'desktop.composer.stage.revise'))
+        })
+        if (useNotes) {
+          if (ctrl.signal.aborted) return
+          const { title, body } = splitTitle(markdown, fallbackTitle)
+          const cited = found.length ? `${body.trimEnd()}\n\n## ${t('desktop.composer.sourcesHeading')}\n\n${found.map((s) => `- \`${s.path}\``).join('\n')}\n` : body
+          // Shown before saving: which notes the document stands on, and where it goes.
+          setReady({ title, body: cited, sources: found.map(({ path, title }) => ({ path, title })) })
+          return
+        }
       }
       if (ctrl.signal.aborted) return
       const { title, body } = splitTitle(markdown, fallbackTitle)
@@ -124,6 +172,21 @@ export function AIComposer(props: ComposerProps) {
     setBusy(null)
   }
 
+  async function create(r: Ready): Promise<void> {
+    setBusy(t('desktop.composer.saving'))
+    setError(null)
+    try {
+      await props.onCreate(r.title, r.body, folder)
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const q = filter.trim().toLowerCase()
+  const pickable = props.notePaths.filter((p) => !p.split('/').some((s) => s.startsWith('.')) && (!q || p.toLowerCase().includes(q)))
+
   const hint = 'm-0 text-muted-foreground'
   const check = 'flex items-center gap-[7px] [&>input]:accent-primary'
 
@@ -141,6 +204,46 @@ export function AIComposer(props: ComposerProps) {
         }}
         onInteractOutside={(e) => busy && e.preventDefault()}
       >
+        {ready ? (
+          <div className="flex flex-col gap-3">
+            <DialogTitle className="m-0 flex items-center gap-1.5 text-[15px] font-semibold">
+              <Sparkles className="size-4 text-primary" aria-hidden="true" /> {ready.title}
+            </DialogTitle>
+            <div className="flex flex-col gap-1.5 text-[12.5px]">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {t('desktop.composer.sourcesUsed', { count: ready.sources.length })}
+              </span>
+              {ready.sources.length ? (
+                <ul className="m-0 flex max-h-[180px] list-none flex-col gap-1 overflow-y-auto p-0">
+                  {ready.sources.map((s) => (
+                    <li key={s.path} className="flex min-w-0 items-center gap-1.5">
+                      <FileText className="size-3.5 flex-none text-muted-foreground" aria-hidden="true" />
+                      <span className="truncate">{s.title}</span>
+                      <span className="truncate font-mono text-xs text-muted-foreground">{s.path}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className={hint}>{t('desktop.composer.noSources')}</p>
+              )}
+              <p className={hint}>{t('desktop.composer.destination', { path: folder || t('desktop.vault.rootFolder') })}</p>
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <Button type="button" variant="outline" size="sm" disabled={Boolean(busy)} onClick={() => setReady(null)}>
+                {t('desktop.composer.back')}
+              </Button>
+              <Button type="button" size="sm" disabled={Boolean(busy)} onClick={() => void create(ready)}>
+                <Sparkles />
+                {t('desktop.composer.create')}
+              </Button>
+            </div>
+            {error && (
+              <p className="m-0 text-[12.5px] text-destructive" role="alert">
+                {error}
+              </p>
+            )}
+          </div>
+        ) : (
         <form
           className="flex flex-col gap-3"
           aria-label={t('desktop.ai.writeWithAI')}
@@ -203,11 +306,49 @@ export function AIComposer(props: ComposerProps) {
             )}
             {!(isMeeting && useMeeting) && (
               <label className={check}>
-                <input type="checkbox" checked={useFolder} onChange={(e) => setUseFolder(e.target.checked)} />
-                {t('desktop.composer.scopeFolder', { count: FOLDER_NOTES })}
+                <input type="checkbox" checked={useNotes} onChange={(e) => setUseNotes(e.target.checked)} />
+                {t('desktop.composer.autoFind')}
               </label>
             )}
-            {!useMeeting && !useDoc && !useFolder && <p className={hint}>{t('desktop.composer.scopeNone')}</p>}
+            {!(isMeeting && useMeeting) && useNotes && (
+              <div className="ml-[21px] flex flex-col gap-1.5">
+                <label className="flex items-center gap-2 text-muted-foreground">
+                  <span>{t('desktop.composer.scope')}</span>
+                  <Select
+                    label={t('desktop.composer.scope')}
+                    value={scope}
+                    options={SCOPES.map((s) => ({ value: s.value, label: t(s.label) }))}
+                    onChange={(v) => setScope(v as Scope)}
+                  />
+                </label>
+                {scope === 'files' && (
+                  <div className="flex flex-col gap-1">
+                    <Input
+                      className="h-7 bg-sunken text-[12.5px]"
+                      value={filter}
+                      placeholder={t('desktop.composer.filesFilter')}
+                      aria-label={t('desktop.composer.filesFilter')}
+                      onChange={(e) => setFilter(e.target.value)}
+                    />
+                    <div className="flex max-h-[150px] flex-col gap-0.5 overflow-y-auto rounded-md border px-2 py-1">
+                      {pickable.slice(0, PICKER_ROWS).map((p) => (
+                        <label key={p} className={cn(check, 'min-w-0')}>
+                          <input
+                            type="checkbox"
+                            checked={picked.includes(p)}
+                            onChange={(e) => setPicked(e.target.checked ? [...picked, p] : picked.filter((x) => x !== p))}
+                          />
+                          <span className="truncate font-mono text-xs">{p}</span>
+                        </label>
+                      ))}
+                      {!pickable.length && <p className={hint}>{t('desktop.composer.filesNone')}</p>}
+                    </div>
+                    <span className="text-xs text-muted-foreground">{t('desktop.composer.filesPicked', { count: picked.length })}</span>
+                  </div>
+                )}
+              </div>
+            )}
+            {!useMeeting && !useDoc && !useNotes && <p className={hint}>{t('desktop.composer.scopeNone')}</p>}
           </fieldset>
           <div className="flex items-center gap-2">
             <label className="mr-auto flex items-center gap-2 text-xs text-muted-foreground">
@@ -248,6 +389,7 @@ export function AIComposer(props: ComposerProps) {
             </p>
           )}
         </form>
+        )}
       </DialogContent>
     </Dialog>
   )

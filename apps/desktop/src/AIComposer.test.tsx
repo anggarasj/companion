@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { t } from '@meetcc/shared/i18n'
 import type { AIClient } from '@meetcc/ai'
 import type { Vault, VaultNote } from '@meetcc/vault'
+import type { Workspace } from './agent/types'
 import { paletteResults } from './CommandPalette'
 
 const complete = vi.fn<AIClient['complete']>()
@@ -39,6 +40,21 @@ function fakeVault(files: Record<string, string>, notes: Record<string, VaultNot
   } as unknown as Vault
 }
 
+/** Notes the agent can find: two in Product, one elsewhere. */
+const notes: Record<string, { title: string; body: string }> = {
+  'Product/auth.md': { title: 'Auth architecture', body: 'OIDC via a managed provider.' },
+  'Product/roadmap.md': { title: 'Roadmap', body: 'Q4 items.' },
+  'Other/auth-old.md': { title: 'Old auth', body: 'JWT-only, superseded.' },
+}
+const workspace = (): Workspace => ({
+  current: null,
+  paths: () => Object.keys(notes),
+  files: () => [],
+  readFile: async () => null,
+  search: (q) => Object.entries(notes).filter(([, n]) => `${n.title} ${n.body}`.toLowerCase().includes(q.toLowerCase())).map(([path, n]) => ({ path, title: n.title, updatedAt: '' })),
+  read: async (p) => notes[p] ?? null,
+})
+
 function mount(props: Partial<Parameters<typeof AIComposer>[0]> & { vault: Vault }) {
   const onCreate = vi.fn(async () => {})
   render(
@@ -46,7 +62,8 @@ function mount(props: Partial<Parameters<typeof AIComposer>[0]> & { vault: Vault
       folders={['Product', 'Projects/Phoenix']}
       folder="Product"
       current={null}
-      notePaths={[]}
+      notePaths={Object.keys(notes)}
+      workspace={workspace}
       onCreate={onCreate}
       onClose={() => {}}
       {...props}
@@ -59,6 +76,7 @@ describe('AIComposer', () => {
   it('writes a document from a prompt into the chosen folder', async () => {
     complete.mockResolvedValue('# PRD Passkey\n\n## Problem\n\nLogin lambat.')
     const { onCreate } = mount({ vault: fakeVault({}) })
+    fireEvent.click(screen.getByRole('checkbox', { name: t('desktop.composer.autoFind') }))
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Buat PRD passkey' } })
     fireEvent.click(screen.getByRole('button', { name: t('desktop.composer.generate') }))
     await waitFor(() => expect(onCreate).toHaveBeenCalled())
@@ -102,6 +120,7 @@ describe('AIComposer', () => {
       throw new Error('write_vault_file: permission denied')
     })
     mount({ vault: fakeVault({}), onCreate })
+    fireEvent.click(screen.getByRole('checkbox', { name: t('desktop.composer.autoFind') }))
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'x' } })
     fireEvent.click(screen.getByRole('button', { name: t('desktop.composer.generate') }))
     expect((await screen.findByRole('alert')).textContent).toContain('permission denied')
@@ -115,6 +134,49 @@ describe('AIComposer', () => {
     fireEvent.click(await screen.findByRole('button', { name: t('desktop.ai.stop') }))
     expect(screen.getByRole('button', { name: t('desktop.composer.generate') })).toBeTruthy()
     expect(onCreate).not.toHaveBeenCalled()
+  })
+})
+
+describe('AIComposer auto context', () => {
+  const call = (tool: string, args: object) => JSON.stringify({ type: 'tool_calls', calls: [{ tool, args }] })
+
+  it('finds relevant notes in the target folder, grounds the document in them, and shows them before saving', async () => {
+    complete
+      .mockResolvedValueOnce(call('search_vault', { query: 'auth' }))
+      .mockResolvedValueOnce(call('read_note', { path: 'Product/auth.md' }))
+      .mockResolvedValueOnce(JSON.stringify({ type: 'final', answer: 'Found one.', sources: ['Product/auth.md'] }))
+      .mockResolvedValueOnce('# Auth SDD\n\n## Overview\n\nOIDC.') // draft
+      .mockResolvedValueOnce('NO ISSUES') // critique
+    const { onCreate } = mount({ vault: fakeVault({}) })
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'SDD authentication' } })
+    fireEvent.click(screen.getByRole('button', { name: t('desktop.composer.generate') }))
+    await screen.findByText(t('desktop.composer.sourcesUsed', { count: 1 }))
+    expect(screen.getByText('Product/auth.md')).toBeTruthy()
+    expect(onCreate).not.toHaveBeenCalled()
+    // The search stayed inside the target folder.
+    expect(complete.mock.calls[1][0].user).not.toContain('Other/auth-old.md')
+    // The draft was written from the note the agent read.
+    expect(complete.mock.calls[3][0].user).toContain('OIDC via a managed provider.')
+    fireEvent.click(screen.getByRole('button', { name: t('desktop.composer.create') }))
+    await waitFor(() => expect(onCreate).toHaveBeenCalled())
+    const [title, body, folder] = onCreate.mock.calls[0] as unknown as [string, string, string]
+    expect(title).toBe('Auth SDD')
+    expect(body).toContain('- `Product/auth.md`')
+    expect(folder).toBe('Product')
+  })
+
+  it('picked files are used exactly, with no search', async () => {
+    complete.mockResolvedValueOnce('# Doc\n\nBody').mockResolvedValueOnce('NO ISSUES')
+    const vault = fakeVault({}, { 'Other/auth-old.md': { ...meeting, platform: 'manual', title: 'Old auth', body: 'JWT-only, superseded.' } })
+    mount({ vault })
+    fireEvent.click(screen.getByRole('button', { name: t('desktop.composer.scope') }))
+    fireEvent.mouseDown(await screen.findByRole('option', { name: t('desktop.composer.scope.files') }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Other/auth-old.md' }))
+    fireEvent.change(screen.getByPlaceholderText(t('desktop.composer.promptPlaceholder')), { target: { value: 'compare' } })
+    fireEvent.click(screen.getByRole('button', { name: t('desktop.composer.generate') }))
+    await screen.findByText(t('desktop.composer.sourcesUsed', { count: 1 }))
+    expect(complete.mock.calls[0][0].user).toContain('JWT-only, superseded.')
+    expect(complete.mock.calls[0][0].json).toBeUndefined() // no agent step ran
   })
 })
 

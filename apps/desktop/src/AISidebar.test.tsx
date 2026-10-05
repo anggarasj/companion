@@ -1,11 +1,10 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Editor } from '@tiptap/core'
 import { t } from '@meetcc/shared/i18n'
 import { DEFAULT_SETTINGS } from '@meetcc/shared/types'
 import type { AIClient } from '@meetcc/ai'
-import { baseExtensions } from './editor/extensions'
+import type { ChangeTarget, Workspace } from './agent/types'
 
 const complete = vi.fn<AIClient['complete']>()
 let savedModel = { provider: 'openai', model: 'gpt-4o-mini' }
@@ -20,74 +19,223 @@ vi.mock('@meetcc/ai', async (importOriginal) => ({
 }))
 const { AISidebar } = await import('./AISidebar')
 
-let editor: Editor
+/** An in-memory vault: path → { title, body }. */
+let files: Record<string, { title: string; body: string }>
+function memoryWorkspace(): Workspace & ChangeTarget {
+  return {
+    current: null,
+    paths: () => Object.keys(files),
+    files: () => [],
+    readFile: async () => null,
+    search: (q) =>
+      Object.entries(files)
+        .filter(([, n]) => n.body.toLowerCase().includes(q.toLowerCase()))
+        .map(([path, n]) => ({ path, title: n.title, updatedAt: '' })),
+    read: async (p) => files[p] ?? null,
+    readBody: async (p) => files[p]?.body ?? null,
+    writeBody: async (p, body) => {
+      files[p] = { ...files[p], body }
+      return body
+    },
+    create: async (p, title, body) => {
+      files[p] = { title, body }
+      return body
+    },
+    remove: async (p) => {
+      delete files[p]
+    },
+  }
+}
+
+const reply = (v: object) => JSON.stringify(v)
+const read = (path: string) => reply({ type: 'tool_calls', calls: [{ tool: 'read_note', args: { path } }] })
+
+let onOpen: ReturnType<typeof vi.fn<(path: string) => void>>
+let onChanged: ReturnType<typeof vi.fn<(removed: string[]) => void>>
 beforeEach(() => {
   complete.mockReset()
   localStorage.clear()
   savedModel = { provider: 'openai', model: 'gpt-4o-mini' }
-  editor = new Editor({ extensions: baseExtensions(), content: '# PRD\n\nIntro.', contentType: 'markdown' })
+  files = {
+    'arch/auth.md': { title: 'Auth', body: 'We use JWT-only authentication.' },
+    'prd/login.md': { title: 'Login PRD', body: 'Login with JWT-only.' },
+  }
+  onOpen = vi.fn<(path: string) => void>()
+  onChanged = vi.fn<(removed: string[]) => void>()
 })
-afterEach(() => {
-  cleanup()
-  editor.destroy()
-})
+afterEach(cleanup)
+
+function mount() {
+  render(
+    <AISidebar
+      hasDocument={false}
+      folder=""
+      workspace={memoryWorkspace}
+      onOpen={onOpen}
+      onChanged={onChanged}
+      onClose={() => {}}
+      onWriteWithAI={() => {}}
+    />,
+  )
+}
 
 function ask(text: string) {
-  render(<AISidebar editor={editor} docTitle="PRD" onClose={() => {}} onWriteWithAI={() => {}} />)
   fireEvent.change(screen.getByPlaceholderText(t('desktop.aiPanel.placeholder')), { target: { value: text } })
   fireEvent.click(screen.getByRole('button', { name: t('desktop.aiPanel.send') }))
 }
 
 describe('AISidebar', () => {
-  it('writes the answer into the document and reports what changed', async () => {
-    complete.mockResolvedValue('{"op":"append","markdown":"## Security\\n\\n- TLS","summary":"Added a Security section."}')
-    ask('Tambahkan section Security')
-    await screen.findByText('Added a Security section.')
-    expect(editor.getMarkdown()).toContain('## Security')
-    fireEvent.click(screen.getByRole('button', { name: t('desktop.aiPanel.showChanges') }))
-    expect(document.querySelector('[data-kind="add"]')?.textContent).toBeTruthy()
+  it('answers a question with clickable sources and changes nothing', async () => {
+    complete
+      .mockResolvedValueOnce(read('arch/auth.md'))
+      .mockResolvedValueOnce(reply({ type: 'final', answer: 'Auth is JWT-only today.', sources: ['arch/auth.md'] }))
+    mount()
+    ask('Apa yang kita putuskan soal authentication?')
+    await screen.findByText('Auth is JWT-only today.')
+    fireEvent.click(screen.getByRole('button', { name: 'Auth' }))
+    expect(onOpen).toHaveBeenCalledWith('arch/auth.md')
+    expect(files['arch/auth.md'].body).toBe('We use JWT-only authentication.')
+    expect(screen.queryByRole('button', { name: new RegExp(t('desktop.aiPanel.apply')) })).toBeNull()
   })
 
-  it('undo restores the document exactly', async () => {
-    complete.mockResolvedValue('{"op":"replaceDocument","markdown":"# Other"}')
-    ask('rewrite')
-    await screen.findByText(t('desktop.aiPanel.applied.document'))
-    expect(editor.getMarkdown().trim()).toBe('# Other')
+  it('renders the answer as markdown, with raw HTML kept as text', async () => {
+    complete.mockResolvedValueOnce(
+      reply({ type: 'final', answer: '### Status\n\n- **GAP 2**: blocker\n- `Helper_Engine` B8\n\n<img src=x onerror=alert(1)>' }),
+    )
+    mount()
+    ask('review folder kalkulator')
+    const heading = await screen.findByRole('heading', { name: 'Status' })
+    const answer = heading.parentElement!
+    expect(answer.querySelectorAll('li')).toHaveLength(2)
+    expect(answer.querySelector('strong')?.textContent).toBe('GAP 2')
+    expect(answer.querySelector('code')?.textContent).toBe('Helper_Engine')
+    expect(answer.textContent).not.toContain('**')
+    expect(answer.querySelector('img')).toBeNull()
+    expect(answer.textContent).toContain('<img src=x onerror=alert(1)>')
+  })
+
+  it('stages a multi-file change: nothing is written before Apply, Apply all writes, Undo restores', async () => {
+    complete
+      .mockResolvedValueOnce(reply({ type: 'tool_calls', calls: [{ tool: 'read_note', args: { path: 'arch/auth.md' } }, { tool: 'read_note', args: { path: 'prd/login.md' } }] }))
+      .mockResolvedValueOnce(
+        reply({
+          type: 'final',
+          summary: 'Mention OIDC.',
+          changes: [
+            { type: 'replace_text', path: 'arch/auth.md', oldText: 'JWT-only authentication', newText: 'OIDC authentication' },
+            { type: 'replace_text', path: 'prd/login.md', oldText: 'JWT-only', newText: 'OIDC' },
+          ],
+        }),
+      )
+    mount()
+    ask('Update semua dokumen yang masih JWT-only')
+    await screen.findByText('Mention OIDC.')
+    expect(screen.getByText(t('desktop.aiPanel.proposes', { count: 2, files: 2 }))).toBeTruthy()
+    expect(files['arch/auth.md'].body).toBe('We use JWT-only authentication.')
+
+    fireEvent.click(screen.getAllByRole('button', { name: t('desktop.aiPanel.showChanges') })[0])
+    expect(document.querySelector('[data-kind="add"]')?.textContent).toContain('OIDC authentication')
+
+    fireEvent.click(screen.getByRole('button', { name: t('desktop.aiPanel.applyAll', { count: 2 }) }))
+    await waitFor(() => expect(files['prd/login.md'].body).toBe('Login with OIDC.'))
+    expect(files['arch/auth.md'].body).toBe('We use OIDC authentication.')
+    expect(onChanged).toHaveBeenCalled()
+
     fireEvent.click(screen.getByRole('button', { name: new RegExp(t('desktop.aiPanel.undo')) }))
-    expect(editor.getMarkdown()).toBe('# PRD\n\nIntro.')
-    expect(screen.getByText(t('desktop.aiPanel.undone'))).toBeTruthy()
+    await waitFor(() => expect(files['arch/auth.md'].body).toBe('We use JWT-only authentication.'))
+    expect(files['prd/login.md'].body).toBe('Login with JWT-only.')
   })
 
-  it('will not undo over edits made afterwards', async () => {
-    complete.mockResolvedValue('{"op":"append","markdown":"Added."}')
-    ask('add')
-    await screen.findByText(t('desktop.aiPanel.applied.append'))
-    editor.commands.insertContentAt(editor.state.doc.content.size, 'typed by hand')
-    const typed = editor.getMarkdown()
-    fireEvent.click(screen.getByRole('button', { name: new RegExp(t('desktop.aiPanel.undo')) }))
-    expect(editor.getMarkdown()).toBe(typed)
-    expect(screen.getByText(t('desktop.aiPanel.editedSince'))).toBeTruthy()
+  it('a rejected change writes nothing; an accepted one beside it still applies', async () => {
+    complete
+      .mockResolvedValueOnce(reply({ type: 'tool_calls', calls: [{ tool: 'read_note', args: { path: 'arch/auth.md' } }, { tool: 'read_note', args: { path: 'prd/login.md' } }] }))
+      .mockResolvedValueOnce(
+        reply({
+          type: 'final',
+          changes: [
+            { type: 'replace_text', path: 'arch/auth.md', oldText: 'JWT-only', newText: 'OIDC' },
+            { type: 'replace_text', path: 'prd/login.md', oldText: 'JWT-only', newText: 'OIDC' },
+          ],
+        }),
+      )
+    mount()
+    ask('update')
+    await screen.findByText(t('desktop.aiPanel.proposes', { count: 2, files: 2 }))
+    fireEvent.click(screen.getAllByRole('button', { name: new RegExp(t('desktop.aiPanel.reject')) })[0])
+    fireEvent.click(screen.getByRole('button', { name: t('desktop.aiPanel.apply') }))
+    await waitFor(() => expect(files['prd/login.md'].body).toBe('Login with OIDC.'))
+    expect(files['arch/auth.md'].body).toBe('We use JWT-only authentication.')
+    expect(screen.getByText(t('desktop.aiPanel.status.rejected'))).toBeTruthy()
   })
 
-  it('a provider error is shown and the document is untouched', async () => {
+  it('a note edited after the AI read it is not overwritten', async () => {
+    complete
+      .mockResolvedValueOnce(read('arch/auth.md'))
+      .mockResolvedValueOnce(reply({ type: 'final', changes: [{ type: 'replace_body', path: 'arch/auth.md', body: 'All new.' }] }))
+    mount()
+    ask('rewrite auth')
+    await screen.findByText(t('desktop.aiPanel.proposes', { count: 1, files: 1 }))
+    files['arch/auth.md'].body = 'Typed by hand meanwhile.'
+    fireEvent.click(screen.getByRole('button', { name: t('desktop.aiPanel.apply') }))
+    await screen.findByText(t('desktop.aiPanel.status.stale'))
+    expect(files['arch/auth.md'].body).toBe('Typed by hand meanwhile.')
+  })
+
+  it('review findings are shown, and "Fix selected" asks for changes to the chosen ones', async () => {
+    complete
+      .mockResolvedValueOnce(read('prd/login.md'))
+      .mockResolvedValueOnce(
+        reply({
+          type: 'final',
+          answer: 'One issue.',
+          findings: [{ severity: 'warning', title: 'No acceptance criteria', explanation: 'Login has none.', sources: [{ path: 'prd/login.md' }] }],
+        }),
+      )
+      .mockResolvedValueOnce(reply({ type: 'final', answer: 'Nothing to fix after all.' }))
+    mount()
+    ask('Review PRD ini')
+    await screen.findByText('No acceptance criteria')
+    expect(files['prd/login.md'].body).toBe('Login with JWT-only.')
+    fireEvent.click(screen.getByRole('checkbox'))
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(t('desktop.aiPanel.fixSelected')) }))
+    await screen.findByText('Nothing to fix after all.')
+    expect(screen.getByText(t('desktop.aiPanel.fixRequest', { count: 1 }))).toBeTruthy()
+    expect(complete.mock.calls[2][0].user).toContain('No acceptance criteria')
+  })
+
+  it('remembers earlier turns for a follow-up', async () => {
+    complete
+      .mockResolvedValueOnce(read('arch/auth.md'))
+      .mockResolvedValueOnce(reply({ type: 'final', answer: 'Found it.', sources: ['arch/auth.md'] }))
+      .mockResolvedValueOnce(reply({ type: 'final', answer: 'Opening.', open: 'arch/auth.md' }))
+    mount()
+    ask('Cari pembahasan auth')
+    await screen.findByText('Found it.')
+    ask('Yang pertama buka')
+    await screen.findByText('Opening.')
+    expect(complete.mock.calls[2][0].user).toContain('"n":1,"path":"arch/auth.md"')
+    expect(onOpen).toHaveBeenCalledWith('arch/auth.md')
+  })
+
+  it('a provider error is shown and nothing is written', async () => {
     complete.mockRejectedValue(new Error('HTTP 401: invalid key'))
+    mount()
     ask('anything')
     expect((await screen.findByRole('alert')).textContent).toContain('HTTP 401')
-    expect(editor.getMarkdown()).toBe('# PRD\n\nIntro.')
-    expect(editor.isEditable).toBe(true)
+    expect(files['arch/auth.md'].body).toBe('We use JWT-only authentication.')
   })
 
-  it('stop leaves the document as it was', async () => {
+  it('stop ends the run', async () => {
     complete.mockImplementation(() => new Promise(() => {}))
+    mount()
     ask('long job')
     fireEvent.click(await screen.findByRole('button', { name: t('desktop.ai.stop') }))
-    expect(editor.isEditable).toBe(true)
-    expect(editor.getMarkdown()).toBe('# PRD\n\nIntro.')
+    expect(screen.getByRole('button', { name: t('desktop.aiPanel.send') })).toBeTruthy()
   })
 
   it('effort can be picked for a reasoning model behind a gateway, and it sticks', async () => {
     savedModel = { provider: 'custom', model: 'ag/gemini-3.8-flash' }
-    render(<AISidebar editor={editor} docTitle="PRD" onClose={() => {}} onWriteWithAI={() => {}} />)
+    mount()
     const effort = await screen.findByRole('button', { name: t('desktop.aiPanel.effort') })
     expect(effort.textContent).toContain(t('desktop.aiPanel.effort.auto'))
     fireEvent.click(effort)
@@ -97,7 +245,7 @@ describe('AISidebar', () => {
   })
 
   it('a model without an effort setting shows that instead of a dead control', async () => {
-    render(<AISidebar editor={editor} docTitle="PRD" onClose={() => {}} onWriteWithAI={() => {}} />)
+    mount()
     expect(await screen.findByText(t('desktop.aiPanel.effortNone'))).toBeTruthy()
   })
 })

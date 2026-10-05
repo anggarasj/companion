@@ -24,6 +24,10 @@ import UpdateBanner from './UpdateBanner'
 import { AIComposer } from './AIComposer'
 import { CommandPalette, type PaletteCommand } from './CommandPalette'
 import { AISidebar } from './AISidebar'
+import { UNSAVED_DOC, vaultWorkspace, type OpenBoard } from './agent/tools'
+import { pdfText } from './pdfText'
+import { mermaidToBoard } from './mermaidBoard'
+import { contextOf } from './editor/editorOps'
 import { VaultList } from './VaultList'
 import { PageHeader } from './PageHeader'
 import { FileView, isPdf } from './FileView'
@@ -166,6 +170,12 @@ function platformLabel(platform: string): string {
 }
 
 /** Dot folders are tool state (.obsidian, .assets, .trash), not notes. */
+/** A vault PDF's text, for the AI agent. */
+async function vaultPdfText(rel: string): Promise<string> {
+  const bytes: ArrayBuffer = await invoke('read_vault_bytes', { rel })
+  return pdfText(bytes)
+}
+
 const hiddenPath = (p: string): boolean => p.split('/').some((part) => part.startsWith('.'))
 
 function dayOf(iso?: string): string {
@@ -404,6 +414,8 @@ export default function App() {
   }
   // The open note's live editor, published by NoteEditor for the AI panel.
   const [liveEditor, setLiveEditor] = useState<Editor | null>(null)
+  // The board open in the main pane, published by Whiteboard for the AI panel.
+  const [liveBoard, setLiveBoard] = useState<OpenBoard | null>(null)
   // Window shortcuts read the current render through this.
   const saveShortcutRef = useRef<() => void>(() => {})
 
@@ -1084,6 +1096,39 @@ export default function App() {
     [query, incoming, filtered],
   )
 
+  /**
+   * The vault as the AI agent sees it, built fresh per request and per Apply.
+   * The open note comes from the live editor, so the agent reads unsaved
+   * edits and a change it applies lands there, under the editor's own save.
+   */
+  const agentWorkspace = (vault: Vault) => {
+    const ed = note && liveEditor && !liveEditor.isDestroyed ? liveEditor : null
+    return vaultWorkspace({
+      vault,
+      index: driver ? (q) => search(driver, q) : undefined,
+      paths: notes.map((n) => n.rel),
+      files: otherFiles,
+      pdfText: vaultPdfText,
+      mermaid: mermaidToBoard,
+      board: liveBoard && liveBoard.path === viewing ? liveBoard : null,
+      openFile: viewing && (isBoard(viewing) || isPdf(viewing)) ? viewing : undefined,
+      open:
+        note && ed
+          ? {
+              path: selected ?? UNSAVED_DOC,
+              title: note.title,
+              platform: note.platform,
+              markdown: () => ed.getMarkdown(),
+              selection: () => contextOf(ed, ed.state.selection.from, ed.state.selection.to).selection,
+              replace: (markdown) => {
+                if (!ed.isEditable) throw new Error(t('desktop.aiPanel.inlineOpen'))
+                ed.commands.setContent(markdown, { contentType: 'markdown', emitUpdate: true })
+              },
+            }
+          : null,
+    })
+  }
+
   const searchBodies = (q: string): string[] => {
     if (!driver) return []
     try {
@@ -1597,7 +1642,7 @@ export default function App() {
           {viewing ? (
             isBoard(viewing) ? (
               <Suspense fallback={null}>
-                <Whiteboard key={viewing} rel={viewing} onError={setError} />
+                <Whiteboard key={viewing} rel={viewing} onError={setError} onBoard={setLiveBoard} />
               </Suspense>
             ) : (
               <FileView rel={viewing} onError={setError} />
@@ -1727,10 +1772,22 @@ export default function App() {
           )}
         </section>
       </main>
-      {aiPanel && (
+      {aiPanel && vault && (
         <AISidebar
-          editor={note ? liveEditor : null}
-          docTitle={note?.title ?? ''}
+          hasDocument={Boolean(note)}
+          folder={selected ? selected.split('/').slice(0, -1).join('/') : (target ?? '')}
+          workspace={() => agentWorkspace(vault)}
+          onOpen={(rel) => guard(() => open(rel))}
+          onChanged={async (removed) => {
+            if (selected && removed.includes(selected)) {
+              setNote(null)
+              setSelected(null)
+              setDirty(false)
+            }
+            // An undone board creation takes the board away; do not leave its viewer on a missing file.
+            if (viewing && removed.includes(viewing)) setViewing(null)
+            await refresh(vault)
+          }}
           onClose={() => setAiPanel(false)}
           onWriteWithAI={() => setComposer({})}
         />
@@ -1742,6 +1799,7 @@ export default function App() {
           folder={selected ? selected.split('/').slice(0, -1).join('/') : (target ?? '')}
           current={note}
           notePaths={notes.map((n) => n.rel)}
+          workspace={() => agentWorkspace(vault)}
           kind={composer.kind}
           onCreate={createDocument}
           onClose={() => setComposer(null)}

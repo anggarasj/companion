@@ -123,6 +123,35 @@ describe('new documents', () => {
     expect(calls[0].user).not.toContain('# b')
   })
 
+  it('a grounded document is drafted, critiqued against its sources and revised', async () => {
+    const replies = ['# Draft\n\nUnsupported claim.', '1. "Unsupported claim" is not in the sources.', '# Final\n\n_[not covered]_']
+    const { client, calls } = fake(async () => replies[calls.length - 1])
+    const stages: string[] = []
+    const md = await writeDocument(client, 'SDD', [{ title: 'auth', body: 'OIDC' }], undefined, (s) => stages.push(s))
+    expect(md).toBe('# Final\n\n_[not covered]_')
+    expect(stages).toEqual(['draft', 'review', 'revise'])
+    expect(calls[1].user).toContain('<draft>\n# Draft')
+    expect(calls[1].user).toContain('<source>\n# auth\n\nOIDC\n</source>')
+    expect(calls[2].user).toContain('<review>\n1. "Unsupported claim"')
+  })
+
+  it('a clean critique keeps the draft, and a failed one falls back to it', async () => {
+    const ok = fake(async () => (ok.calls.length === 1 ? '# Draft' : 'NO ISSUES'))
+    expect(await writeDocument(ok.client, 'p', [{ title: 'a', body: 'b' }])).toBe('# Draft')
+    expect(ok.calls).toHaveLength(2)
+    const broken = fake(async () => {
+      if (broken.calls.length === 1) return '# Draft'
+      throw new AIError('HTTP 500', true)
+    })
+    expect(await writeDocument(broken.client, 'p', [{ title: 'a', body: 'b' }])).toBe('# Draft')
+  })
+
+  it('a document with no sources is one call, no critique', async () => {
+    const { client, calls } = fake('# Doc')
+    await writeDocument(client, 'p', [])
+    expect(calls).toHaveLength(1)
+  })
+
   it('splits the generated title from the body', () => {
     expect(splitTitle('# PRD Passkey\n\n## Problem', 'Untitled')).toEqual({ title: 'PRD Passkey', body: '## Problem' })
     expect(splitTitle('No heading', 'Untitled')).toEqual({ title: 'Untitled', body: 'No heading' })
