@@ -375,6 +375,11 @@ function zoomRows() {
   return rows.length ? { via: 'zoom subtitle overlay', rows, namesChanged } : null
 }
 
+/** The same caption among the last few captured, if it is already there. */
+function recentDuplicate(speaker, avatar, text) {
+  return entries.slice(-8).find((e) => e.speaker === speaker && e.text === text && (!ZOOM || e.avatar === avatar))
+}
+
 function captureRows(found) {
   let dirty = !!found.namesChanged
   for (const { el, speaker, avatar, text, fallback } of found.rows) {
@@ -387,9 +392,7 @@ function captureRows(found) {
     if (!entry) {
       // Teams virtual list recycles/remounts DOM nodes on scroll: an already
       // captured caption can come back as a fresh element. Re-adopt, not dup.
-      const dup = entries
-        .slice(-8)
-        .find((e) => e.speaker === speaker && e.text === text && (!ZOOM || e.avatar === avatar))
+      const dup = recentDuplicate(speaker, avatar, text)
       if (dup) {
         seen.set(el, dup)
         continue

@@ -344,10 +344,11 @@ export function KnowledgeView({
   };
 
   const addCustomTag = () => {
-    const parts = customTagInput
-      .split(',')
-      .map((s) => s.trim().toLowerCase())
-      .filter((s) => s.length > 0 && !selectedTagSet.has(s));
+    const parts: string[] = [];
+    for (const raw of customTagInput.split(',')) {
+      const tag = raw.trim().toLowerCase();
+      if (tag && !selectedTagSet.has(tag)) parts.push(tag);
+    }
     if (parts.length > 0) {
       setFormSelectedTags([...formSelectedTags, ...parts]);
       setCustomTagInput('');
