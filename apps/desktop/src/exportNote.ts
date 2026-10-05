@@ -49,9 +49,13 @@ export async function withDiagrams(
     try {
       const figure = doc.createElement('figure')
       figure.className = 'mermaid'
-      // Mermaid's own output under securityLevel 'strict', sanitized by its DOMPurify;
-      // parsed into an inert DOMParser document, and the PDF frame runs no scripts.
-      figure.innerHTML = await render(code.textContent ?? '')
+      // Mermaid's own output under securityLevel 'strict', sanitized by its DOMPurify.
+      // Parsed in an inert DOMParser document and moved over as a node, never
+      // assigned as markup; only an <svg> root is taken, and the PDF frame runs no scripts.
+      const parsed = new DOMParser().parseFromString(await render(code.textContent ?? ''), 'text/html')
+      const svg = parsed.body.firstElementChild
+      if (svg?.localName !== 'svg') throw new Error('not an SVG diagram')
+      figure.append(doc.importNode(svg, true))
       code.parentElement?.replaceWith(figure)
     } catch {
       /* bad syntax: the source stays in the export, readable as code */
@@ -67,21 +71,28 @@ export async function withDiagrams(
  * single block taller than a page is cut, at the page edge.
  */
 export function pageBreaks(bottoms: number[], total: number, pageH: number): number[] {
-  const cuts = [...new Set(bottoms.map(Math.ceil))].filter((b) => b > 0 && b < total).sort((a, b) => a - b)
+  const inside = new Set<number>()
+  for (const b of bottoms) if (Math.ceil(b) > 0 && Math.ceil(b) < total) inside.add(Math.ceil(b))
+  const cuts = [...inside]
+  cuts.sort((a, b) => a - b)
   const ends: number[] = []
   let start = 0
-  let i = 0
   while (total - start > pageH) {
-    let end = start + pageH
-    while (i < cuts.length && cuts[i] <= start) i++
-    let j = i
-    while (j < cuts.length && cuts[j] <= start + pageH) j++
-    if (j > i) end = cuts[j - 1]
-    ends.push(end)
-    start = end
+    start = pageEnd(cuts, start, pageH)
+    ends.push(start)
   }
   ends.push(total)
   return ends
+}
+
+/** Where a page starting at `start` ends: at the last cut that fits, or at the page edge when none does. */
+function pageEnd(cuts: number[], start: number, pageH: number): number {
+  let end = start + pageH
+  for (const cut of cuts) {
+    if (cut > start + pageH) break
+    if (cut > start) end = cut
+  }
+  return end
 }
 
 /** Generate markdown text with optional YAML frontmatter and title */
@@ -366,11 +377,10 @@ export async function buildExportPdf(
     // ponytail: ~2 min for a 116-page note in Chrome; render off the main thread if that ever matters.
     const scale = 2
     const pdf = new jsPDF({ unit: 'mm', format: 'a4', compress: true })
-    let from = 0
     let page = 0
     while (page < ends.length) {
-      let last = page
-      while (last + 1 < ends.length && ends[last + 1] - from <= CHUNK_PX) last++
+      const from = page ? ends[page - 1] : 0
+      const last = chunkLast(ends, page, from)
       const chunk = await html2canvas(body, {
         scale,
         backgroundColor: '#ffffff',
@@ -379,22 +389,35 @@ export async function buildExportPdf(
         y: top + from,
         height: ends[last] - from,
       })
-      const chunkFrom = from
-      for (; page <= last; page++) {
-        if (page) pdf.addPage()
-        const end = ends[page]
-        const slice = document.createElement('canvas')
-        slice.width = chunk.width
-        slice.height = Math.ceil((end - from) * scale)
-        slice.getContext('2d')?.drawImage(chunk, 0, -Math.floor((from - chunkFrom) * scale))
-        pdf.addImage(slice, 'PNG', MARGIN_MM, MARGIN_MM, A4_W_MM - 2 * MARGIN_MM, (end - from) * mmPerPx)
-        from = end
-      }
+      addPages(pdf, chunk, ends, page, last, { scale, mmPerPx })
+      page = last + 1
     }
     return pdf.output('blob')
   } finally {
     frame.remove()
     URL.revokeObjectURL(url)
+  }
+}
+
+/** The last page that still fits in one canvas chunk starting at `from`. */
+function chunkLast(ends: number[], page: number, from: number): number {
+  let last = page
+  for (let next = page + 1; next < ends.length && ends[next] - from <= CHUNK_PX; next++) last = next
+  return last
+}
+
+/** Cut a rendered chunk into its pages, `first`…`last`, and add them to the PDF. */
+function addPages(pdf: jsPDF, chunk: HTMLCanvasElement, ends: number[], first: number, last: number, at: { scale: number; mmPerPx: number }): void {
+  const chunkFrom = first ? ends[first - 1] : 0
+  for (let page = first; page <= last; page++) {
+    const from = page ? ends[page - 1] : 0
+    const end = ends[page]
+    if (page) pdf.addPage()
+    const slice = document.createElement('canvas')
+    slice.width = chunk.width
+    slice.height = Math.ceil((end - from) * at.scale)
+    slice.getContext('2d')?.drawImage(chunk, 0, -Math.floor((from - chunkFrom) * at.scale))
+    pdf.addImage(slice, 'PNG', MARGIN_MM, MARGIN_MM, A4_W_MM - 2 * MARGIN_MM, (end - from) * at.mmPerPx)
   }
 }
 

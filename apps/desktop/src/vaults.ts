@@ -23,9 +23,8 @@ export function loadVaults(): VaultEntry[] {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? '[]') as unknown
     if (!Array.isArray(raw)) return []
-    return raw.filter(
-      (v): v is VaultEntry => typeof v?.id === 'string' && typeof v?.path === 'string' && typeof v?.name === 'string',
-    ).map((v) => ({ ...v, hidden: Boolean(v.hidden) }))
+    const isEntry = (v: VaultEntry): v is VaultEntry => typeof v?.id === 'string' && typeof v?.path === 'string' && typeof v?.name === 'string'
+    return (raw as VaultEntry[]).flatMap((v) => (isEntry(v) ? [{ ...v, hidden: Boolean(v.hidden) }] : []))
   } catch {
     return []
   }

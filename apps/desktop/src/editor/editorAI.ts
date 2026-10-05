@@ -215,14 +215,13 @@ export async function writeDocument(
   // Sources are cut to a fixed budget in the order given; callers pass them
   // best first (the agent's retrieval order, or the user's own pick).
   let budget = DOCUMENT
-  const context = sources
-    .map((s) => {
-      if (budget <= 0) return ''
-      const body = head(s.body, budget)
-      budget -= body.length
-      return body ? block('source', `# ${s.title}\n\n${body}`) : ''
-    })
-    .filter(Boolean)
+  const context: string[] = []
+  for (const s of sources) {
+    if (budget <= 0) break
+    const body = head(s.body, budget)
+    budget -= body.length
+    if (body) context.push(block('source', `# ${s.title}\n\n${body}`))
+  }
   const user = [
     ...context,
     context.length

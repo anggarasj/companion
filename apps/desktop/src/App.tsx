@@ -1063,13 +1063,13 @@ export default function App() {
     () =>
       withEmptyFolders(
         buildTree([
-          ...notesTab.filter((n) => !hiddenPath(n.rel)).map((n) => ({
+          ...notesTab.flatMap((n) => (hiddenPath(n.rel) ? [] : [{
             rel: n.rel,
             title: n.title,
             platform: n.platform,
             source: n.platform && n.platform !== 'manual' ? platformLabel(n.platform) : undefined,
             updatedAt: n.updatedAt,
-          })),
+          }])),
           ...otherFiles.map((rel) => ({
             rel,
             title: rel.split('/').pop() ?? rel,

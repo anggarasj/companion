@@ -5,6 +5,7 @@ import { Extension, type Editor, type Range } from '@tiptap/core'
 import Suggestion, { type SuggestionKeyDownProps, type SuggestionProps } from '@tiptap/suggestion'
 import { PluginKey } from '@tiptap/pm/state'
 import { t, type MessageKey } from '@meetcc/shared/i18n'
+import { textFilter } from '@/lib/utils'
 
 export type SlashGroup = 'basic' | 'list' | 'content' | 'ai'
 
@@ -52,9 +53,9 @@ export function slashItems(bridge: Pick<SlashBridge, 'ai' | 'media'>): SlashItem
 
 /** Items whose label (in the current language) or keywords contain the query. */
 export function filterSlash(items: SlashItem[], query: string): SlashItem[] {
-  const q = query.trim().toLowerCase()
-  if (!q) return items
-  return items.filter((i) => `${t(i.label)} ${i.keywords} ${i.id}`.toLowerCase().includes(q))
+  if (!query.trim()) return items
+  const has = textFilter(query)
+  return items.filter((i) => has(`${t(i.label)} ${i.keywords} ${i.id}`))
 }
 
 export const SlashCommand = Extension.create<{ bridge: SlashBridge | null }>({

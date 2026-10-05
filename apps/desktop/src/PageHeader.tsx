@@ -21,13 +21,11 @@ const ON_COVER = 'h-7 bg-black/55 px-2 text-[13px] font-normal text-white hover:
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']
 export const isImagePath = (v: string | undefined): boolean => Boolean(v && /\.(png|jpe?g|gif|webp|svg)$/i.test(v))
 
-const EMOJI = [
-  '📄', '📝', '📌', '📎', '📚', '📖', '🗂️', '📁', '🗒️', '📋',
-  '✅', '☑️', '🎯', '🚀', '💡', '🔥', '⭐', '✨', '⚡', '🧭',
-  '🛠️', '⚙️', '🔧', '🧪', '🧩', '🔒', '🔑', '🐛', '📦', '🧱',
-  '📊', '📈', '💰', '🧾', '📅', '⏰', '🗓️', '🤝', '💬', '📣',
-  '🏗️', '🏢', '🌐', '🗺️', '🎨', '🎵', '🌱', '🍀', '☕', '❤️',
-]
+/** The icon picker's emoji, space-separated, in display order. */
+const EMOJI = (
+  '📄 📝 📌 📎 📚 📖 🗂️ 📁 🗒️ 📋 ✅ ☑️ 🎯 🚀 💡 🔥 ⭐ ✨ ⚡ 🧭 🛠️ ⚙️ 🔧 🧪 🧩 🔒 🔑 🐛 📦 🧱 ' +
+  '📊 📈 💰 🧾 📅 ⏰ 🗓️ 🤝 💬 📣 🏗️ 🏢 🌐 🗺️ 🎨 🎵 🌱 🍀 ☕ ❤️'
+).split(' ')
 
 /** Ask for an image file and copy it into `.assets/`; resolves to its vault path. */
 async function importImage(kind: 'cover' | 'icon'): Promise<string | null> {

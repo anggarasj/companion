@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { t } from '@meetcc/shared/i18n'
 import { CornerDownLeft, FileText, Search } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
+import { textFilter } from '@/lib/utils'
 
 export interface PaletteNote {
   rel: string
@@ -26,8 +27,8 @@ export function paletteResults(
   notes: PaletteNote[],
   bodyHits: string[] = [],
 ): Array<{ kind: 'command'; command: PaletteCommand } | { kind: 'note'; note: PaletteNote }> {
-  const q = query.trim().toLowerCase()
-  const cmds = commands.filter((c) => !q || c.label.toLowerCase().includes(q))
+  const has = textFilter(query)
+  const cmds = commands.filter((c) => has(c.label))
   const seen = new Set<string>()
   const hits: PaletteNote[] = []
   const push = (n: PaletteNote | undefined) => {
@@ -36,7 +37,7 @@ export function paletteResults(
       hits.push(n)
     }
   }
-  for (const n of notes) if (!q || n.title.toLowerCase().includes(q) || n.rel.toLowerCase().includes(q)) push(n)
+  for (const n of notes) if (has(n.title) || has(n.rel)) push(n)
   const byRel = new Map(notes.map((n) => [n.rel, n]))
   for (const rel of bodyHits) push(byRel.get(rel))
   return [

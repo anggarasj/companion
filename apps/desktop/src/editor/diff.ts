@@ -7,6 +7,13 @@ export type DiffLine = { kind: 'same' | 'add' | 'del'; text: string }
 /** ponytail: O(n·m) table; past this many cells it reports a full replace. */
 const MAX_CELLS = 2_000_000
 
+/** One row of the LCS table, from the row below it. ponytail: O(n·m) overall, capped by MAX_CELLS. */
+function fillRow(lcs: Uint32Array[], line: string, b: string[], i: number): void {
+  const row = lcs[i]
+  const below = lcs[i + 1]
+  for (let j = b.length - 1; j >= 0; j--) row[j] = line === b[j] ? below[j + 1] + 1 : Math.max(below[j], row[j + 1])
+}
+
 export function lineDiff(before: string, after: string): DiffLine[] {
   const a = before ? before.split('\n') : []
   const b = after ? after.split('\n') : []
@@ -15,11 +22,7 @@ export function lineDiff(before: string, after: string): DiffLine[] {
   }
   // lcs[i][j] = length of the LCS of a[i:] and b[j:]
   const lcs = Array.from({ length: a.length + 1 }, () => new Uint32Array(b.length + 1))
-  for (let i = a.length - 1; i >= 0; i--) {
-    for (let j = b.length - 1; j >= 0; j--) {
-      lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1])
-    }
-  }
+  for (let i = a.length - 1; i >= 0; i--) fillRow(lcs, a[i], b, i)
   const out: DiffLine[] = []
   let i = 0
   let j = 0

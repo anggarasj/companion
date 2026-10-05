@@ -44,7 +44,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { cn, textFilter } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Tip } from '@/components/Tip'
 import { DOCUMENT, PREVIEW } from './editor/prose'
@@ -493,7 +493,8 @@ function AIPanel({
 
   const actions = state.phase === 'prompt' && state.section ? [] : hasSelection ? SELECTION_ACTIONS : CURSOR_ACTIONS
   const q = text.trim().toLowerCase()
-  const matches = actions.filter((a) => !q || t(ACTION_LABEL[a]).toLowerCase().includes(q))
+  const has = textFilter(q)
+  const matches = actions.filter((a) => has(t(ACTION_LABEL[a])))
   type Choice = { key: string; label: string; request: () => AIRequest }
   const choices: Choice[] = [
     ...(q ? [{ key: 'custom', label: text.trim(), request: (): AIRequest => ({ kind: 'custom', instruction: text.trim(), ctx: ctx() }) }] : []),
