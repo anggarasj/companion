@@ -474,6 +474,8 @@ let ccBusy = false
 let ccWasOn = false
 let ccUserOff = false
 let zoomOpenClicks = 0
+/** Attempts to open Zoom's participants pane before settling for initials. */
+const ZOOM_OPEN_TRIES = 5
 const TEAMS_MORE =
   '#callingButtons-showMoreBtn, [data-tid="more-button"], [data-tid="call-more-menu-trigger"]'
 function zoomCcButton() {
@@ -484,8 +486,17 @@ function zoomOpenParticipants() {
     zoomOpenClicks = 0
     return
   }
+  if (zoomOpenClicks >= ZOOM_OPEN_TRIES) {
+    // Said once, then left alone until the pane opens (which resets the count):
+    // capture carries on with the caption's initials/avatar as the speaker.
+    if (zoomOpenClicks === ZOOM_OPEN_TRIES) {
+      console.warn(TAG, `Zoom participants pane did not open after ${ZOOM_OPEN_TRIES} clicks; speaker names fall back to initials/avatar.`)
+      zoomOpenClicks++
+    }
+    return
+  }
   const button = zoomParticipantsButton()
-  if (zoomOpenClicks < 5 && /^open the participants list pane/i.test(button?.getAttribute('aria-label') || '')) {
+  if (/^open the participants list pane/i.test(button?.getAttribute('aria-label') || '')) {
     button.click()
     zoomOpenClicks++
   }

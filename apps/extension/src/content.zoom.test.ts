@@ -54,12 +54,14 @@ function boot(html: string, url = 'https://us04web.zoom.us/wc/123456789/join', d
   }
   // content.js ships unbundled. Give it a Zoom URL and chrome API while the
   // real DOM comes from Vitest's jsdom environment.
+  const log = { log: vi.fn(), warn: vi.fn() }
   new Function('location', 'chrome', 'setInterval', 'console', script)(
     new URL(url), chrome, interval,
-    { log: vi.fn(), warn: vi.fn() },
+    log,
   )
   return {
     sent,
+    log,
     finishSession: () => finishSession?.(),
     tick: (ms: number) => {
       const fn = ticks.get(ms)
@@ -169,6 +171,16 @@ describe('Zoom Web live captions', () => {
     document.querySelector('svg.SvgParticipants')!.closest('button')!.addEventListener('click', click)
     app.tick(3000)
     expect(click).not.toHaveBeenCalled()
+  })
+
+  it('stops clicking a Participants pane that never opens, and says so once', () => {
+    const app = boot(overlay + '<button aria-label="open the participants list pane,[2] particpants"><svg class="SvgParticipants"></svg></button>')
+    const click = vi.fn()
+    document.querySelector('svg.SvgParticipants')!.closest('button')!.addEventListener('click', click)
+    for (let i = 0; i < 9; i++) app.tick(3000)
+    expect(click).toHaveBeenCalledTimes(5)
+    const gaveUp = app.log.warn.mock.calls.filter((args) => String(args[1]).includes('participants pane did not open'))
+    expect(gaveUp).toHaveLength(1)
   })
 
   it('recognizes a numeric room id on the Zoom invitation path', () => {
