@@ -27,9 +27,13 @@ export function sanitizeFilename(title: string, ext: string): string {
  * Resolves to the saved path, or null when the dialog was cancelled.
  */
 export async function saveExport(filename: string, dir: string, blob: Blob): Promise<string | null> {
-  // ponytail: bytes travel as a JSON number array — fine for notes; switch to a raw IPC body if exports reach many MB.
-  const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()))
-  return invoke<string | null>('export_file', { name: filename, dir, bytes })
+  // The bytes are the raw IPC body; a JSON number array was several times the
+  // file's size in memory for a long PDF. Header values must be ASCII, and a
+  // title can be in any language, hence the encoding.
+  const bytes = new Uint8Array(await blob.arrayBuffer())
+  return invoke<string | null>('export_file', bytes, {
+    headers: { 'x-export-name': encodeURIComponent(filename), 'x-export-dir': encodeURIComponent(dir) },
+  })
 }
 
 /** Text for HTML: titles and properties are user data, not markup. */

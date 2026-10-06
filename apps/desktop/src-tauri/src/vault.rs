@@ -685,20 +685,42 @@ fn trash_file(root: &Path, rel: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// A header the frontend sent through `encodeURIComponent`: a note title can be
+/// any language, and a header value is ASCII.
+fn header_text(request: &tauri::ipc::Request<'_>, key: &str) -> Result<String, String> {
+    let raw = request
+        .headers()
+        .get(key)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| format!("missing {key} header"))?;
+    decode_header(raw).ok_or_else(|| format!("{key} is not UTF-8"))
+}
+
+fn decode_header(raw: &str) -> Option<String> {
+    percent_encoding::percent_decode_str(raw).decode_utf8().ok().map(|s| s.into_owned())
+}
+
 /// Save an export wherever the user points the native save dialog, which opens
 /// in `dir` — the vault folder the note lives in. The WebView never names the
 /// target — the dialog does — so this cannot be steered at an arbitrary file.
 /// Async because the dialog blocks, which must not happen on the main thread.
 /// `None` when the dialog was cancelled.
+///
+/// The bytes are the raw IPC body, not a JSON array of numbers: a long PDF
+/// export encoded that way was several times its own size in memory. The file
+/// name and folder ride in `x-export-name` / `x-export-dir`.
 #[tauri::command]
 pub async fn export_file(
     app: tauri::AppHandle,
     state: State<'_, VaultState>,
-    name: String,
-    dir: String,
-    bytes: Vec<u8>,
+    request: tauri::ipc::Request<'_>,
 ) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected raw bytes".into());
+    };
+    let name = header_text(&request, "x-export-name")?;
+    let dir = header_text(&request, "x-export-dir")?;
     let start = abs(&state, &dir)?;
     let Some(picked) = app
         .dialog()
@@ -718,6 +740,16 @@ pub async fn export_file(
 mod tests {
     use super::*;
     use std::env;
+
+    #[test]
+    fn export_headers_carry_a_title_in_any_language() {
+        // encodeURIComponent("Rapat Évaluasi 🚀.pdf") and ("Proyek/Ü")
+        assert_eq!(decode_header("Rapat%20%C3%89valuasi%20%F0%9F%9A%80.pdf").as_deref(), Some("Rapat Évaluasi 🚀.pdf"));
+        assert_eq!(decode_header("Proyek%2F%C3%9C").as_deref(), Some("Proyek/Ü"));
+        assert_eq!(decode_header("plain.md").as_deref(), Some("plain.md"));
+        // Not UTF-8 once decoded: refused, not mangled.
+        assert_eq!(decode_header("%FF%FE"), None);
+    }
 
     #[test]
     fn write_asset_puts_bytes_in_assets_and_refuses_everything_else() {

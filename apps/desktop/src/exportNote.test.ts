@@ -105,6 +105,16 @@ describe('exportNote utilities', () => {
     expect(pageBreaks([2500], 2500, 1000)).toEqual([1000, 2000, 2500])
   })
 
+  it('sends a title in any language through the ASCII-only headers', async () => {
+    invokeMock.mockClear()
+    invokeMock.mockResolvedValue(null)
+    await exportNote({ ...sampleNote, title: 'Rapat Évaluasi 🚀' }, '<p>x</p>', { format: 'markdown', includeMetadata: false, includeTitle: true }, 'Proyek/Ü')
+    const { headers } = invokeMock.mock.calls[0][2] as { headers: Record<string, string> }
+    expect(Object.values(headers).every((v) => /^[\x20-\x7e]*$/.test(v))).toBe(true)
+    expect(decodeURIComponent(headers['x-export-name'])).toBe('Rapat Évaluasi 🚀.md')
+    expect(decodeURIComponent(headers['x-export-dir'])).toBe('Proyek/Ü')
+  })
+
   it('saves through the native save dialog, opened in the note folder', async () => {
     invokeMock.mockResolvedValue('/Users/a/Desktop/picked.md')
     for (const [format, name, type] of [
@@ -115,11 +125,13 @@ describe('exportNote utilities', () => {
       const saved = await exportNote(sampleNote, '<p>body</p>', { format, includeMetadata: true, includeTitle: true }, 'Projects')
       expect(saved).toBe('/Users/a/Desktop/picked.md')
       expect(invokeMock).toHaveBeenCalledTimes(1)
-      const [cmd, args] = invokeMock.mock.calls[0] as [string, { name: string; dir: string; bytes: number[] }]
+      const [cmd, body, opts] = invokeMock.mock.calls[0] as [string, Uint8Array, { headers: Record<string, string> }]
       expect(cmd).toBe('export_file')
-      expect(args.name).toBe(name)
-      expect(args.dir).toBe('Projects')
-      expect(new TextDecoder().decode(new Uint8Array(args.bytes))).toContain(type)
+      // Raw bytes as the IPC body, never a JSON array of numbers.
+      expect(body).toBeInstanceOf(Uint8Array)
+      expect(decodeURIComponent(opts.headers['x-export-name'])).toBe(name)
+      expect(decodeURIComponent(opts.headers['x-export-dir'])).toBe('Projects')
+      expect(new TextDecoder().decode(body)).toContain(type)
     }
   })
 

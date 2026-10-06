@@ -64,6 +64,28 @@ describe('markdown round-trip', () => {
     })
   }
 
+  // Structures that existing vaults carry and a reviewer asked about: each
+  // comes back exactly as written, on the first save and every one after.
+  const structures: Array<[string, string]> = [
+    ['nested task list', '- [ ] parent\n  - [x] child done\n  - [ ] child open\n- [x] second'],
+    ['consecutive blockquotes', '> first quote\n\n> second quote'],
+    ['multi-paragraph blockquote', '> para one\n>\n> para two'],
+    ['nested blockquote', '> outer\n>\n> > inner'],
+    ['bullets inside a numbered item', '1. step\n   - detail\n2. next'],
+    ['task inside a blockquote', '> - [ ] todo in quote'],
+  ]
+  for (const [name, md] of structures) {
+    it(`unchanged: ${name}`, () => {
+      expect(stable(md).trim()).toBe(md)
+    })
+  }
+
+  it('a multi-line table cell keeps its <br>; only column padding is normalised, once', () => {
+    const out = stable('| Item | Notes |\n| --- | --- |\n| A | line one<br>line two |')
+    expect(out).toContain('line one<br>line two')
+    expect(out.trim().split('\n')).toHaveLength(3)
+  })
+
   it('literal markdown characters stay literal', () => {
     const text = '2*3*4 and [x](y) and &amp; and _x_'
     const editor = new Editor({ extensions: baseExtensions() })
