@@ -697,7 +697,10 @@ fn header_text(request: &tauri::ipc::Request<'_>, key: &str) -> Result<String, S
 }
 
 fn decode_header(raw: &str) -> Option<String> {
-    percent_encoding::percent_decode_str(raw).decode_utf8().ok().map(|s| s.into_owned())
+    percent_encoding::percent_decode_str(raw)
+        .decode_utf8()
+        .ok()
+        .map(|s| s.into_owned())
 }
 
 /// Save an export wherever the user points the native save dialog, which opens
@@ -744,8 +747,14 @@ mod tests {
     #[test]
     fn export_headers_carry_a_title_in_any_language() {
         // encodeURIComponent("Rapat Évaluasi 🚀.pdf") and ("Proyek/Ü")
-        assert_eq!(decode_header("Rapat%20%C3%89valuasi%20%F0%9F%9A%80.pdf").as_deref(), Some("Rapat Évaluasi 🚀.pdf"));
-        assert_eq!(decode_header("Proyek%2F%C3%9C").as_deref(), Some("Proyek/Ü"));
+        assert_eq!(
+            decode_header("Rapat%20%C3%89valuasi%20%F0%9F%9A%80.pdf").as_deref(),
+            Some("Rapat Évaluasi 🚀.pdf")
+        );
+        assert_eq!(
+            decode_header("Proyek%2F%C3%9C").as_deref(),
+            Some("Proyek/Ü")
+        );
         assert_eq!(decode_header("plain.md").as_deref(), Some("plain.md"));
         // Not UTF-8 once decoded: refused, not mangled.
         assert_eq!(decode_header("%FF%FE"), None);
