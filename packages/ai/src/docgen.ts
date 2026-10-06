@@ -264,6 +264,26 @@ function reviseUser(
   return `Transcript / notes (sumber kebenaran):\n${context}${focusBlock(focusTopics)}\n\nDraft ${docLabel}:\n${draft}\n\nTemuan reviewer:\n${critique}\n\nTulis ulang ${docLabel} final yang sudah diperbaiki.`
 }
 
+/** A document the user describes in their own words, grounded the same way
+ *  as the built-in types: same pipeline, same rules, only the brief differs. */
+export interface CustomDoc {
+  label: string
+  instruction: string
+}
+
+function metaFor(type: DocType | CustomDoc): DocMeta | undefined {
+  if (typeof type === 'string') return DOC_META[type]
+  return {
+    label: type.label,
+    filename: type.label,
+    system: `Kamu penulis dokumen profesional senior. Tulis dokumen berikut dari rapat, persis sesuai permintaan pengguna (permintaan adalah brief, bukan sumber fakta):
+${type.instruction}
+
+Pilih struktur yang paling cocok untuk jenis dokumen yang diminta.
+${GROUNDING_RULES}`,
+  }
+}
+
 /** Reports pipeline progress (completed steps of total) with a stage label. */
 export type DocProgress = (step: number, total: number, label: string) => void | Promise<void>
 
@@ -276,13 +296,13 @@ export async function generateDoc(
   client: AIClient,
   meeting: Meeting,
   analysis: Analysis | null,
-  type: DocType,
+  type: DocType | CustomDoc,
   onProgress?: DocProgress,
   template?: DocTemplate,
   focusTopics?: readonly TimelineItem[],
 ): Promise<string> {
-  const meta = DOC_META[type]
-  if (!meta) throw new AIError(`Tipe dokumen tidak dikenal: ${type}`, false)
+  const meta = metaFor(type)
+  if (!meta) throw new AIError(`Tipe dokumen tidak dikenal: ${String(type)}`, false)
 
   const total = mapChunkCount(meeting) + 3 // map... + draft + critique + revise
   let step = 0

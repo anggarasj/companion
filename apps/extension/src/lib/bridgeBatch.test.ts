@@ -70,6 +70,10 @@ describe('toBridgeBatch', () => {
     expect(toBridgeBatch(meeting({ id: 'tms-xyz#1787918400000' }), 0).platform).toBe('teams');
   });
 
+  it('labels a Zoom Web room', () => {
+    expect(toBridgeBatch(meeting({ id: 'zm-123456789#1787918400000' }), 0).platform).toBe('zoom');
+  });
+
   it('only puts a note body on the first delivery', () => {
     const analysis = {
       executiveSummary: 'Ringkasan rapat.',
@@ -154,5 +158,13 @@ describe('toDocumentBridgeBatch', () => {
       '2026-09-29T10:00:00.000Z',
     );
     expect(document.platform).toBe('teams');
+  });
+
+  it('uses the source meeting platform for Zoom documents', () => {
+    const document = toDocumentBridgeBatch(
+      meeting({ id: 'zm-123456789#1787918400000' }),
+      'notulen', 'Zoom meeting', 'Notulen', '# Notes', '2026-08-28T15:00:00Z',
+    );
+    expect(document.platform).toBe('zoom');
   });
 });

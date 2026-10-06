@@ -11,7 +11,17 @@ import {
   type ChatMessage,
   type Meeting,
 } from '@meetcc/shared';
-import { Button, TextArea, useToast } from '@meetcc/ui';
+import { useToast } from '@meetcc/ui';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
+import {
+  Bot,
+  HelpCircle,
+  Send,
+  Sparkles,
+  Trash2,
+} from 'lucide-react';
 
 /** Keys, not text: the chips are both the label and the question sent, so both
     have to be in the reader's language. */
@@ -41,21 +51,26 @@ function confidenceLabel(c: number): string {
 
 function ResultMeta({ result, onAsk }: { result: AskResult; onAsk: (q: string) => void }) {
   return (
-    <div className="ask-meta">
-      <div className="ask-grades">
-        <span className={`ask-grade ask-grade-${result.answerability}`}>
+    <div className="ask-meta mt-2 pt-2 border-t border-border/40 flex flex-col gap-2">
+      <div className="ask-grades flex items-center gap-1.5 flex-wrap">
+        <Badge variant="outline" className={`ask-grade ask-grade-${result.answerability} text-[10px] font-medium`}>
           {t(ANSWERABILITY_LABEL[result.answerability])}
-        </span>
+        </Badge>
         {result.intent === 'advise' && (
-          <span className="ask-grade ask-grade-advise">{t('ext.ask.advise')}</span>
+          <Badge variant="secondary" className="ask-grade ask-grade-advise text-[10px]">
+            {t('ext.ask.advise')}
+          </Badge>
         )}
-        <span className="ask-conf dim">Keyakinan {confidenceLabel(result.confidence)}</span>
+        <span className="ask-conf dim text-[11px] text-muted-foreground flex items-center gap-1">
+          <Sparkles className="size-3" />
+          Keyakinan {confidenceLabel(result.confidence)}
+        </span>
       </div>
 
       {result.missing.length > 0 && (
-        <div className="ask-missing">
-          <span className="ask-meta-label">{t('ext.ask.undecided')}</span>
-          <ul>
+        <div className="ask-missing text-xs">
+          <span className="ask-meta-label font-semibold text-muted-foreground block mb-0.5">{t('ext.ask.undecided')}</span>
+          <ul className="list-disc list-inside space-y-0.5 text-muted-foreground">
             {result.missing.map((m, i) => (
               <li key={i}>{m}</li>
             ))}
@@ -64,15 +79,15 @@ function ResultMeta({ result, onAsk }: { result: AskResult; onAsk: (q: string) =
       )}
 
       {result.evidence.length > 0 && (
-        <div className="ask-evidence">
-          <span className="ask-meta-label">{t('ext.ask.evidence')}</span>
-          <ul>
+        <div className="ask-evidence text-xs">
+          <span className="ask-meta-label font-semibold text-muted-foreground block mb-0.5">{t('ext.ask.evidence')}</span>
+          <ul className="space-y-1">
             {result.evidence.map((e, i) => (
-              <li key={i}>
-                <span className="ask-ev-who">
+              <li key={i} className="p-1.5 rounded bg-muted/40 border border-border/30">
+                <span className="ask-ev-who font-mono text-[10px] text-primary block">
                   {e.speakers.join(', ')} · {fmtTime(e.startTime)}
                 </span>
-                <span className="ask-ev-text">{e.preview}</span>
+                <span className="ask-ev-text text-foreground/90">{e.preview}</span>
               </li>
             ))}
           </ul>
@@ -80,9 +95,17 @@ function ResultMeta({ result, onAsk }: { result: AskResult; onAsk: (q: string) =
       )}
 
       {result.followUps.length > 0 && (
-        <div className="ask-followups">
+        <div className="ask-followups flex items-center gap-1.5 flex-wrap mt-1">
           {result.followUps.map((q, i) => (
-            <Button key={i} className="ask-chip" onClick={() => onAsk(q)}>{q}</Button>
+            <Button
+              key={i}
+              variant="outline"
+              size="xs"
+              className="ask-chip rounded-full h-6 text-xs"
+              onClick={() => onAsk(q)}
+            >
+              {q}
+            </Button>
           ))}
         </div>
       )}
@@ -97,10 +120,6 @@ export function AskView({ meeting, live }: { meeting: Meeting; live: boolean }) 
   const scroller = useRef<HTMLDivElement>(null);
   const toast = useToast();
 
-  // Storage is the transcript of the conversation, not this component. The
-  // service worker writes both turns there — it holds the API key, so it has
-  // to — and this follows along, which is what makes an answer that landed
-  // while the view was unmounted show up on the way back.
   useEffect(() => {
     let alive = true;
     const reload = () => void loadChat(meeting.id).then((h) => alive && setMessages(h));
@@ -125,8 +144,6 @@ export function AskView({ meeting, live }: { meeting: Meeting; live: boolean }) 
     setBusy(true);
     try {
       const res = await chrome.runtime.sendMessage({ type: 'ask', meetingId: meeting.id, question });
-      // The answer arrives through storage, like every other turn — appending
-      // it here as well would show it twice.
       if (!res?.ok) toast('error', t('ext.failed', { error: res?.error ?? t('ext.unknownError') }));
     } catch (e) {
       toast('error', t('ext.failed', { error: (e as Error).message }));
@@ -144,47 +161,67 @@ export function AskView({ meeting, live }: { meeting: Meeting; live: boolean }) 
   const empty = messages.length === 0;
 
   return (
-    <div className="ask">
-      <div className="subbar">
-        <span className="ask-hint dim">{t('ext.ask.hint')}</span>
-        <span className="spacer" />
-        <Button variant="danger" onClick={clear} disabled={empty || busy}>
-          Clear
+    <div className="ask flex flex-col h-full">
+      <div className="subbar flex items-center justify-between p-2.5 border-b border-border/40">
+        <span className="ask-hint dim text-xs text-muted-foreground flex items-center gap-1.5">
+          <HelpCircle className="size-3.5 text-muted-foreground/70" />
+          {t('ext.ask.hint')}
+        </span>
+        <Button
+          variant="ghost"
+          size="xs"
+          className="text-muted-foreground hover:text-destructive"
+          onClick={clear}
+          disabled={empty || busy}
+        >
+          <Trash2 className="size-3 mr-1" />
+          {'Clear'}
         </Button>
       </div>
 
-      <div className="ask-scroll" ref={scroller}>
+      <div className="ask-scroll flex-1 overflow-y-auto p-4" ref={scroller}>
         {empty && !busy ? (
-          <div className="ask-empty">
-            <div className="empty-glyph">?</div>
-            <p>{t('ext.ask.empty')}</p>
-            <p className="empty-hint">
+          <div className="ask-empty flex flex-col items-center justify-center p-8 text-center gap-3">
+            <div className="empty-glyph p-3 rounded-full bg-primary/10 text-primary border border-primary/20">
+              <Bot className="size-8" />
+            </div>
+            <p className="font-semibold text-sm text-foreground">{t('ext.ask.empty')}</p>
+            <p className="empty-hint text-xs text-muted-foreground max-w-sm">
               {t('ext.ask.emptyHint', { id: displayMeetingId(meeting.id) })}
             </p>
-            <div className="ask-suggest">
+            <div className="ask-suggest flex items-center justify-center gap-1.5 flex-wrap max-w-md mt-2">
               {SUGGESTIONS.map((key) => (
-                <Button key={key}
-                className="ask-chip"
-                onClick={() => void send(t(key))}
-                disabled={busy}>{t(key)}</Button>
+                <Button
+                  key={key}
+                  variant="outline"
+                  size="xs"
+                  className="ask-chip rounded-full h-7 text-xs"
+                  onClick={() => void send(t(key))}
+                  disabled={busy}
+                >
+                  {t(key)}
+                </Button>
               ))}
             </div>
           </div>
         ) : (
-          <div className="ask-thread">
+          <div className="ask-thread space-y-4 max-w-2xl mx-auto">
             {messages.map((m, i) => (
-              <div key={i} className={`bubble bubble-${m.role}`}>
-                <div className="bubble-text">{m.content}</div>
+              <div
+                key={i}
+                className={`bubble bubble-${m.role} p-3.5 rounded-xl border text-xs ${m.role === 'user' ? 'bg-primary/10 border-primary/25 ml-auto max-w-[85%]' : 'bg-card border-border/60 mr-auto max-w-[95%] shadow-xs'}`}
+              >
+                <div className="bubble-text leading-relaxed whitespace-pre-wrap">{m.content}</div>
                 {m.result && <ResultMeta result={m.result} onAsk={(q) => void send(q)} />}
-                <time className="bubble-time">{fmtTime(m.time)}</time>
+                <time className="bubble-time font-mono text-[10px] text-muted-foreground block mt-1.5 text-right">{fmtTime(m.time)}</time>
               </div>
             ))}
             {busy && (
-              <div className="bubble bubble-assistant" aria-live="polite">
-                <div className="typing" aria-label="Menjawab">
-                  <span />
-                  <span />
-                  <span />
+              <div className="bubble bubble-assistant p-3 rounded-xl border border-border/60 bg-card mr-auto shadow-xs" aria-live="polite">
+                <div className="typing flex items-center gap-1.5" aria-label="Menjawab">
+                  <span className="size-2 rounded-full bg-primary animate-bounce" />
+                  <span className="size-2 rounded-full bg-primary animate-bounce [animation-delay:0.2s]" />
+                  <span className="size-2 rounded-full bg-primary animate-bounce [animation-delay:0.4s]" />
                 </div>
               </div>
             )}
@@ -193,14 +230,14 @@ export function AskView({ meeting, live }: { meeting: Meeting; live: boolean }) 
       </div>
 
       <form
-        className="ask-composer"
+        className="ask-composer p-3 border-t border-border/50 bg-background flex items-center gap-2"
         onSubmit={(e) => {
           e.preventDefault();
           void send(input);
         }}
       >
-        <TextArea
-          className="ask-input"
+        <Textarea
+          className="ask-input min-h-[38px] max-h-32 text-xs py-2 resize-none"
           value={input}
           rows={1}
           placeholder={live ? t('ext.ask.placeholderLive') : t('ext.ask.placeholder')}
@@ -213,7 +250,8 @@ export function AskView({ meeting, live }: { meeting: Meeting; live: boolean }) 
           }}
           aria-label={t('ext.ask.question')}
         />
-        <Button variant="primary" type="submit" disabled={busy || !input.trim()}>
+        <Button variant="default" size="sm" type="submit" disabled={busy || !input.trim()}>
+          <Send className="size-3.5 mr-1" />
           {busy ? '…' : t('ext.ask.send')}
         </Button>
       </form>

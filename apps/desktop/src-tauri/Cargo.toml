@@ -34,3 +34,5 @@ tauri-plugin-updater = "2.11.0"
 tauri-plugin-process = "2.3.1"
 keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 tauri-plugin-http = "2.6.0"
+# Already in the tree through tauri; used directly to read export file names from IPC headers.
+percent-encoding = "2.3.2"

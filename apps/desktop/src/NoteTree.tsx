@@ -6,7 +6,10 @@
 import { useState } from 'react'
 import { formatDate, t } from '@meetcc/shared/i18n'
 import type { TreeFolder, TreeNote } from './tree'
-import { Button } from '@meetcc/ui'
+import { ChevronRight, File, FileText, FileType, Folder, FolderOpen, FolderPlus, Pencil, Trash2, Video } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { Input } from '@/components/ui/input'
+import { Tip } from '@/components/Tip'
 
 const KEY = 'companion:collapsed-folders'
 
@@ -74,15 +77,16 @@ export function NoteTree({
   const countNotes = (folder: TreeFolder): number =>
     folder.notes.length + folder.folders.reduce((n, f) => n + countNotes(f), 0)
 
-  const renderFolder = (folder: TreeFolder) => {
+  const renderFolder = (folder: TreeFolder, depth: number) => {
     const isCollapsed = collapsed.has(folder.path)
     const total = countNotes(folder)
+    const FolderIcon = isCollapsed ? Folder : FolderOpen
     return (
-      <li key={folder.path}>
-        <div className="tree-folder-row">
+      <li key={folder.path} className="group/tree min-w-0">
+        <div className="group/row relative flex min-w-0 items-center">
           {renaming === folder.path ? (
-            <input
-              className="search"
+            <Input
+              className="h-7"
               autoFocus
               aria-label={t('desktop.vault.folderName')}
               defaultValue={folder.name}
@@ -97,9 +101,12 @@ export function NoteTree({
               }}
             />
           ) : (
-            <Button
+            <button
               type="button"
-              className={over === folder.path ? 'tree-folder drop-over' : 'tree-folder'}
+              className={cn(
+                'group/folder flex min-h-7 w-full min-w-0 flex-1 items-center gap-1.5 rounded-md py-1 pl-1 pr-2 text-left text-[13px] font-semibold leading-snug text-foreground transition-colors hover:bg-muted',
+                over === folder.path && 'bg-muted ring-1 ring-inset ring-primary',
+              )}
               aria-expanded={!isCollapsed}
               onClick={() => toggle(folder.path)}
               onDragOver={(e) => {
@@ -116,63 +123,83 @@ export function NoteTree({
                 if (rel) onMove(rel, folder.path)
               }}
             >
-              <svg
-                className={isCollapsed ? 'tree-caret' : 'tree-caret open'}
-                viewBox="0 0 16 16"
+              <ChevronRight
+                className={cn(
+                  'size-3.5 flex-none text-muted-foreground transition-transform duration-150 group-hover/folder:text-primary motion-reduce:transition-none',
+                  !isCollapsed && 'rotate-90',
+                )}
                 aria-hidden="true"
-              >
-                <path d="M6 4l4 4-4 4" />
-              </svg>
-              <span className="tree-name">{folder.name}</span>
-              {total > 0 && <span className="tree-count">{total}</span>}
-            </Button>
+              />
+              <FolderIcon className="size-4 flex-none text-muted-foreground" aria-hidden="true" />
+              <span className="flex-1 truncate">{folder.name}</span>
+              {total > 0 && (
+                <span className="flex-none text-[11px] font-normal leading-none tabular-nums text-muted-foreground group-hover/row:opacity-0">
+                  {total}
+                </span>
+              )}
+            </button>
           )}
-          <Button
-            type="button"
-            className="tree-add"
-            aria-label={t('desktop.vault.renameFolder', { folder: folder.name })}
-            data-tip={t('desktop.vault.renameFolder', { folder: folder.name })}
-            onClick={() => setRenaming(folder.path)}
-          >
-            ✎
-          </Button>
-          <Button
-            type="button"
-            className="tree-add"
-            aria-label={t('desktop.vault.trashFolder', { folder: folder.name })}
-            data-tip={t('desktop.vault.trashFolder', { folder: folder.name })}
-            onClick={() => onTrashFolder(folder.path)}
-          >
-            ×
-          </Button>
-          <Button
-            type="button"
-            className="tree-add"
-            aria-label={t('desktop.vault.newFolderIn', { folder: folder.name })}
-            data-tip={t('desktop.vault.newFolderIn', { folder: folder.name })}
-            onClick={() => onAddFolder(folder.path)}
-          >
-            ⊞
-          </Button>
+          <div className="absolute right-1 top-0 flex h-7 items-center gap-0.5 rounded-md bg-card/90 pl-1 opacity-0 pointer-events-none backdrop-blur-xs group-hover/row:opacity-100 group-hover/row:pointer-events-auto focus-within:opacity-100 focus-within:pointer-events-auto">
+            <Tip label={t('desktop.vault.renameFolder', { folder: folder.name })}>
+              <button
+                type="button"
+                className="grid size-6 place-items-center rounded-sm text-muted-foreground hover:bg-muted hover:text-primary"
+                aria-label={t('desktop.vault.renameFolder', { folder: folder.name })}
+                onClick={() => setRenaming(folder.path)}
+              >
+                <Pencil className="size-3.5" />
+              </button>
+            </Tip>
+            <Tip label={t('desktop.vault.trashFolder', { folder: folder.name })}>
+              <button
+                type="button"
+                className="grid size-6 place-items-center rounded-sm text-muted-foreground hover:bg-muted hover:text-destructive"
+                aria-label={t('desktop.vault.trashFolder', { folder: folder.name })}
+                onClick={() => onTrashFolder(folder.path)}
+              >
+                <Trash2 className="size-3.5" />
+              </button>
+            </Tip>
+            <Tip label={t('desktop.vault.newFolderIn', { folder: folder.name })}>
+              <button
+                type="button"
+                className="grid size-6 place-items-center rounded-sm text-muted-foreground hover:bg-muted hover:text-primary"
+                aria-label={t('desktop.vault.newFolderIn', { folder: folder.name })}
+                onClick={() => onAddFolder(folder.path)}
+              >
+                <FolderPlus className="size-3.5" />
+              </button>
+            </Tip>
+          </div>
         </div>
-        {!isCollapsed && renderChildren(folder)}
+        {!isCollapsed && renderChildren(folder, depth + 1)}
       </li>
     )
   }
 
-  // Indentation comes from the nested lists, each drawing its own guide line;
-  // the stylesheet stops indenting past a few levels so deep paths stay legible.
-  const renderChildren = (folder: TreeFolder) => (
-    <ul className="tree-list">
-      {folder.folders.map((f) => renderFolder(f))}
+  // One guide line per level, under the parent's chevron. Past four levels
+  // the lines stop stepping right, so a deep path keeps room for its titles.
+  const renderChildren = (folder: TreeFolder, depth: number) => (
+    <ul
+      className={cn(
+        'm-0 flex min-w-0 list-none flex-col gap-0.5 p-0',
+        0 < depth && depth < 5 && 'ml-[11px] border-l border-border/60 pl-1.5 transition-colors group-hover/tree:border-border motion-reduce:transition-none',
+      )}
+    >
+      {folder.folders.map((f) => renderFolder(f, depth))}
       {folder.notes.map((n) => {
         const delivered = Boolean(n.platform && n.platform !== 'manual')
+        const active = selected === n.rel
+        const Icon = n.kind === 'pdf' ? FileType : n.kind === 'file' ? File : delivered ? Video : FileText
         return (
-          <li key={n.rel}>
-            <Button
+          <li key={n.rel} className="min-w-0">
+            <button
               type="button"
               draggable
-              className={selected === n.rel ? 'note-item active' : 'note-item'}
+              className={cn(
+                'group/note flex min-h-7 w-full min-w-0 cursor-grab items-center gap-1.5 rounded-md py-1 pl-1 pr-2 text-left transition-colors hover:bg-muted active:cursor-grabbing',
+                active && 'bg-primary/12 shadow-[inset_2px_0_0_var(--primary)] hover:bg-primary/12',
+              )}
               title={rowTooltip(n)}
               onClick={() => onOpen(n.rel)}
               onDragStart={(e) => {
@@ -180,19 +207,44 @@ export function NoteTree({
                 e.dataTransfer.effectAllowed = 'move'
               }}
             >
+              <span className="size-3.5 flex-none" aria-hidden="true" />
               {/* A delivered meeting is an archive — editing copies it — so it
                   is marked before the click, not after. */}
-              <span className={delivered ? 'note-kind delivered' : 'note-kind'} aria-hidden="true" />
-              <span className="note-title">{n.title}</span>
-              <span className="note-row-meta">
-                {n.source && <span className="note-source">{n.source}</span>}
+              <Icon
+                className={cn(
+                  'size-4 flex-none text-muted-foreground',
+                  delivered && !n.kind && 'text-primary',
+                  n.kind === 'pdf' && 'text-destructive',
+                  n.kind === 'file' && 'opacity-60',
+                )}
+                aria-hidden="true"
+              />
+              <span
+                className={cn(
+                  'min-w-0 flex-1 truncate text-[13px] leading-snug text-muted-foreground group-hover/note:text-foreground',
+                  active && 'font-semibold text-foreground',
+                )}
+              >
+                {n.title}
+              </span>
+              <span className="flex max-w-[45%] flex-none items-center gap-1.5 overflow-hidden">
+                {n.source && (
+                  <span
+                    className={cn(
+                      'hidden max-w-1/2 truncate rounded-sm border px-1 text-[10px] font-medium leading-snug tracking-wide text-muted-foreground group-hover/note:inline',
+                      active && 'inline border-primary text-primary',
+                    )}
+                  >
+                    {n.source}
+                  </span>
+                )}
                 {n.updatedAt && (
-                  <span className="note-date">
+                  <span className="flex-none text-[11px] tabular-nums text-muted-foreground">
                     {formatDate(n.updatedAt, { day: 'numeric', month: 'short' })}
                   </span>
                 )}
               </span>
-            </Button>
+            </button>
           </li>
         )
       })}
@@ -200,11 +252,14 @@ export function NoteTree({
   )
 
   const empty = root.folders.length === 0 && root.notes.length === 0
-  if (empty) return <ul className="note-list"><li className="empty-hint">{t('desktop.vault.empty')}</li></ul>
+  if (empty) return <p className="m-0 p-2.5 text-[12.5px] leading-normal text-muted-foreground">{t('desktop.vault.empty')}</p>
 
   return (
     <div
-      className={over === '' ? 'note-tree drop-over' : 'note-tree'}
+      className={cn(
+        'min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden rounded-md px-2.5 pb-3 pt-1.5',
+        over === '' && 'bg-muted ring-1 ring-inset ring-primary',
+      )}
       onDragOver={(e) => {
         e.preventDefault()
         setOver('')
@@ -219,7 +274,7 @@ export function NoteTree({
         if (rel) onMove(rel, '')
       }}
     >
-      {renderChildren(root)}
+      {renderChildren(root, 0)}
     </div>
   )
 }

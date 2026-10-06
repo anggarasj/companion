@@ -83,10 +83,16 @@ export async function rebuild(
   const skipped: string[] = []
   for (const [i, note] of rows.entries()) {
     const path = paths?.[i] ?? vault.relPath(note)
+    // A .md written by another app has no Companion identity: id and session
+    // key both parse as "". Every such file used to collide with every other
+    // on the UNIQUE key and drop out of search. The path is unique per file,
+    // so it stands in until the note is saved here and gets an identity.
+    const id = note.id || `path:${path}`
+    const sessionKey = note.sessionKey || `path:${path}`
     try {
       db.run(
         'INSERT INTO vault_notes(id, session_key, title, body, platform, updated_at, path) VALUES (?,?,?,?,?,?,?)',
-        [note.id, note.sessionKey, note.title, note.body, note.platform, note.updatedAt, path],
+        [id, sessionKey, note.title, note.body, note.platform, note.updatedAt, path],
       )
     } catch {
       // Two files can carry one session key — someone copies a .md in Finder,

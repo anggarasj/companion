@@ -12,6 +12,8 @@ export interface TreeNote {
   /** Human-facing source label, set by the desktop UI. */
   source?: string
   updatedAt?: string
+  /** Not a note: a PDF the app can show, or any other file it cannot. */
+  kind?: 'pdf' | 'file'
 }
 
 export interface TreeFolder {

@@ -6,7 +6,13 @@ export interface CompletionRequest {
   user: string;
   /** ask the provider for JSON output when it supports enforcement */
   json?: boolean;
+  /** How hard a reasoning model should think. Sent only to models that take
+   *  it (see `supportsEffort`); everything else ignores it. Unset = the
+   *  provider default. */
+  effort?: Effort;
 }
+
+export type Effort = 'low' | 'medium' | 'high';
 
 export interface AIClient {
   readonly provider: ProviderId;

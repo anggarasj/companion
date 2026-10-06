@@ -6,7 +6,10 @@ import {
   watchStorage,
   type UpdateState,
 } from '@meetcc/shared';
-import { Button, useToast } from '@meetcc/ui';
+import { useToast } from '@meetcc/ui';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Copy, ExternalLink, Sparkles, X } from 'lucide-react';
 
 const COMMAND = 'companion update';
 
@@ -40,30 +43,42 @@ export function UpdateBanner() {
   if (!manifest.key || !updateAvailable(current, state, dismissed)) return null;
 
   return (
-    <div className="update-banner">
-      <span className="update-pill">v{state?.latest}</span>
-      <span className="update-text">
-        Versi baru tersedia. Jalankan <code>{COMMAND}</code> di terminal, lalu restart
-        browser Companion.
+    <div className="update-banner flex items-center gap-2.5 p-2 px-3 bg-primary/10 border-b border-primary/20 text-xs text-foreground">
+      <Sparkles className="size-4 text-primary shrink-0" />
+      <Badge variant="outline" className="update-pill font-mono text-[10px] bg-background/60 border-primary/30 text-primary">
+        v{state?.latest}
+      </Badge>
+      <span className="update-text flex-1 truncate">
+        Versi baru tersedia. Jalankan <code className="font-mono text-primary font-semibold">{COMMAND}</code> di terminal, lalu restart browser Companion.
       </span>
-      <Button className="update-copy"
-      onClick={async () => {
-        await navigator.clipboard.writeText(COMMAND);
-        toast('success', 'Perintah update disalin.');
-      }}>
-        Salin perintah
+      <Button
+        variant="outline"
+        size="xs"
+        className="update-copy gap-1 h-6 text-xs bg-background/80"
+        onClick={async () => {
+          await navigator.clipboard.writeText(COMMAND);
+          toast('success', 'Perintah update disalin.');
+        }}
+      >
+        <Copy className="size-3" />
+        {'Salin perintah'}
       </Button>
-      <a className="update-link" href={state?.url} target="_blank" rel="noreferrer">
-        Catatan rilis
+      <a className="update-link inline-flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground underline ml-1" href={state?.url} target="_blank" rel="noreferrer">
+        {'Catatan rilis'}
+        <ExternalLink className="size-2.5" />
       </a>
-      <Button className="update-dismiss"
-      aria-label="Tutup pemberitahuan update"
-      title="Sembunyikan sampai rilis berikutnya"
-      onClick={() => {
-        // Per version, so the next release speaks up again.
-        void chrome.storage.local.set({ [UPDATE_DISMISSED_KEY]: state?.latest });
-      }}>
-        ×
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        className="update-dismiss size-5 p-0 text-muted-foreground hover:text-foreground"
+        aria-label="Tutup pemberitahuan update"
+        title="Sembunyikan sampai rilis berikutnya"
+        onClick={() => {
+          // Per version, so the next release speaks up again.
+          void chrome.storage.local.set({ [UPDATE_DISMISSED_KEY]: state?.latest });
+        }}
+      >
+        <X className="size-3" />
       </Button>
     </div>
   );

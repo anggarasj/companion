@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { emitTo, listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { LangPref } from '@meetcc/shared/i18n'
-import { useToast } from '@meetcc/ui'
+import { useToast } from './toast'
 import { SettingsPage } from './SettingsPage'
 import {
   SETTINGS_ACTION_EVENT,
@@ -88,7 +88,7 @@ export function SettingsWindow() {
   }
 
   return (
-    <main className="settings-window">
+    <main className="h-full min-w-0 bg-background">
       <SettingsPage
         root={root ?? '…'}
         noteCount={noteCount}

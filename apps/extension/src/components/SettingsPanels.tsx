@@ -5,7 +5,10 @@ import { sendMessage } from '../lib/sendMessage';
 import { t } from '@meetcc/shared/i18n';
 import chromeBadge from '../../../../assets/badges/chrome-web-store.svg';
 import firefoxBadge from '../../../../assets/badges/firefox-addon.svg';
-import { Button, TextArea, TextInput, useToast } from '@meetcc/ui';
+import { useToast } from '@meetcc/ui';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 
 // The panels behind the Settings tabs: optional integrations (P2.5-P2.10),
 // custom templates (P2.1) and the data tools (snapshot export for the MCP
@@ -171,7 +174,7 @@ export function IntegrationsPanel({
         {i.tracker.provider === 'jira' && (
           <label className="field">
             <span>{t('ext.tracker.baseUrl')}</span>
-            <TextInput
+            <Input
               type="url"
               value={i.tracker.baseUrl}
               placeholder="https://org.atlassian.net"
@@ -181,7 +184,7 @@ export function IntegrationsPanel({
         )}
         <label className="field">
           <span>{t('ext.tracker.token')}</span>
-          <TextInput type="password"
+          <Input type="password"
             autoComplete="off"
             value={i.tracker.token}
             placeholder={i.tracker.provider === 'jira' ? 'email@org.com:api-token' : 'API key'}
@@ -197,7 +200,7 @@ export function IntegrationsPanel({
                 ? t('ext.tracker.teamId')
                 : t('ext.tracker.databaseId')}
           </span>
-          <TextInput type="text"
+          <Input type="text"
             value={i.tracker.target}
             onChange={(e) => patch({ tracker: { ...i.tracker, target: e.target.value } })}
           />
@@ -223,7 +226,7 @@ export function IntegrationsPanel({
         </label>
         <label className="field">
           <span>{t('ext.sync.endpoint')}</span>
-          <TextInput type="url"
+          <Input type="url"
             value={i.sync.endpoint}
             placeholder="http://localhost:8787"
             onChange={(e) => patch({ sync: { ...i.sync, endpoint: e.target.value } })}
@@ -231,7 +234,7 @@ export function IntegrationsPanel({
         </label>
         <label className="field">
           <span>{t('ext.sync.token')}</span>
-          <TextInput type="password"
+          <Input type="password"
             autoComplete="off"
             value={i.sync.token}
             onChange={(e) => patch({ sync: { ...i.sync, token: e.target.value } })}
@@ -239,7 +242,7 @@ export function IntegrationsPanel({
         </label>
         <label className="field">
           <span>{t('ext.sync.workspace')}</span>
-          <TextInput type="text"
+          <Input type="text"
             value={i.sync.workspaceId}
             placeholder="tim-platform"
             onChange={(e) => patch({ sync: { ...i.sync, workspaceId: e.target.value } })}
@@ -248,7 +251,7 @@ export function IntegrationsPanel({
         </label>
         <label className="field">
           <span>{t('ext.sync.passphrase')}</span>
-          <TextInput type="password"
+          <Input type="password"
             autoComplete="off"
             value={i.sync.passphrase}
             onChange={(e) => patch({ sync: { ...i.sync, passphrase: e.target.value } })}
@@ -267,7 +270,7 @@ export function IntegrationsPanel({
         <legend>{t('ext.transcription.legend')}</legend>
         <label className="field">
           <span>{t('ext.transcription.endpoint')}</span>
-          <TextInput type="url"
+          <Input type="url"
             value={i.transcription.endpoint}
             placeholder="https://api.openai.com/v1/audio/transcriptions"
             onChange={(e) => patch({ transcription: { ...i.transcription, endpoint: e.target.value } })}
@@ -276,7 +279,7 @@ export function IntegrationsPanel({
         </label>
         <label className="field">
           <span>{t('ext.transcription.apiKey')}</span>
-          <TextInput type="password"
+          <Input type="password"
             autoComplete="off"
             value={i.transcription.apiKey}
             onChange={(e) => patch({ transcription: { ...i.transcription, apiKey: e.target.value } })}
@@ -284,14 +287,14 @@ export function IntegrationsPanel({
         </label>
         <label className="field">
           <span>Model</span>
-          <TextInput type="text"
+          <Input type="text"
             value={i.transcription.model}
             onChange={(e) => patch({ transcription: { ...i.transcription, model: e.target.value } })}
           />
         </label>
         <label className="field">
           <span>{t('ext.integrations.calendarClientId')}</span>
-          <TextInput type="text"
+          <Input type="text"
             value={i.calendarClientId}
             placeholder="xxxx.apps.googleusercontent.com"
             onChange={(e) => patch({ calendarClientId: e.target.value })}
@@ -358,7 +361,7 @@ export function TemplatesPanel() {
 
       <label className="field">
         <span>{t('ext.templates.name')}</span>
-        <TextInput type="text"
+        <Input type="text"
           value={draft.name}
           placeholder="Notulen retro tim"
           onChange={(e) => setDraft({ ...draft, name: e.target.value })}
@@ -373,7 +376,7 @@ export function TemplatesPanel() {
       </label>
       <label className="field">
         <span>{t('ext.templates.instructions')}</span>
-        <TextArea rows={4}
+        <Textarea rows={4}
           value={draft.instructions}
           placeholder={t('ext.templates.instructionsPlaceholder')}
           onChange={(e) => setDraft({ ...draft, instructions: e.target.value })}
@@ -381,14 +384,14 @@ export function TemplatesPanel() {
       </label>
       <label className="field">
         <span>{t('ext.templates.sections')}</span>
-        <TextArea rows={3}
+        <Textarea rows={3}
           value={draft.sections.join('\n')}
           onChange={(e) => setDraft({ ...draft, sections: e.target.value.split('\n').filter(Boolean) })}
         />
       </label>
       <div className="subbar">
         <span className="spacer" />
-        <Button variant="primary" onClick={() => void save()}>
+        <Button variant="default" onClick={() => void save()}>
           {draft.id ? 'Perbarui template' : 'Tambah template'}
         </Button>
       </div>
@@ -400,7 +403,7 @@ export function TemplatesPanel() {
             <span className="dim">{tpl.kind}</span>
             <span className="spacer" />
             <Button onClick={() => setDraft(tpl)}>Edit</Button>
-            <Button variant="danger"
+            <Button variant="destructive"
               onClick={async () => {
                 setTemplates(await db<Template[]>('delete-template', { id: tpl.id }));
               }}
@@ -490,7 +493,7 @@ export function DataPanel({ selectedMeeting }: { selectedMeeting: string | null 
         <legend>{t('ext.data.share')}</legend>
         <label className="field">
           <span>{t('ext.data.passphrase')}</span>
-          <TextInput
+          <Input
             type="password"
             autoComplete="off"
             value={passphrase}

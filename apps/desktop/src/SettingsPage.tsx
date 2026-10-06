@@ -1,6 +1,9 @@
 import { useState, type KeyboardEvent } from 'react'
 import { t, LANGS, type LangPref, type MessageKey } from '@meetcc/shared/i18n'
-import { Button, SegmentedControl } from '@meetcc/ui'
+import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { Segmented } from '@/components/Segmented'
+import { SETTING_HINT, SETTING_ROW } from '@/components/settingStyles'
 import { AIProviderPanel } from './AIProviderPanel'
 import { InstallView } from './InstallView'
 import { VersionPanel } from './VersionPanel'
@@ -60,9 +63,9 @@ export function SettingsPage({
   }
 
   return (
-    <div className="settings-layout">
+    <div className="grid h-full grid-cols-[200px_minmax(0,1fr)]">
       <nav
-        className="settings-nav"
+        className="flex flex-col gap-0.5 border-r bg-card px-3 py-7"
         role="tablist"
         aria-orientation="vertical"
         aria-label={t('desktop.settings.title')}
@@ -77,7 +80,10 @@ export function SettingsPage({
             aria-selected={section === key}
             aria-controls="settings-panel"
             tabIndex={section === key ? 0 : -1}
-            className={section === key ? 'settings-nav-item active' : 'settings-nav-item'}
+            className={cn(
+              'rounded-md px-3 py-[7px] text-left text-[13px] font-medium leading-snug text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary',
+              section === key && 'bg-primary/12 font-semibold text-primary hover:bg-primary/12 hover:text-primary',
+            )}
             onClick={() => setSection(key)}
           >
             {t(SECTIONS[key])}
@@ -86,22 +92,21 @@ export function SettingsPage({
       </nav>
 
       <div
-        className="settings"
+        className="overflow-y-auto px-9 pb-10 pt-7 *:max-w-[640px]"
         id="settings-panel"
         role="tabpanel"
         aria-labelledby={`settings-tab-${section}`}
       >
-        <h1>{t(SECTIONS[section])}</h1>
+        <h1 className="mb-5 mt-0 text-xl font-semibold">{t(SECTIONS[section])}</h1>
 
         {section === 'general' && (
           <>
-            <section className="setting-row">
+            <section className={SETTING_ROW}>
               <div>
                 <h2>{t('desktop.settings.language')}</h2>
-                <p className="hint">{t('desktop.settings.languageHint')}</p>
+                <p className={SETTING_HINT}>{t('desktop.settings.languageHint')}</p>
               </div>
-              <SegmentedControl
-                role="group"
+              <Segmented
                 ariaLabel={t('desktop.settings.language')}
                 options={(['system', ...LANGS] as LangPref[]).map((pref) => ({
                   value: pref,
@@ -112,13 +117,12 @@ export function SettingsPage({
               />
             </section>
 
-            <section className="setting-row">
+            <section className={SETTING_ROW}>
               <div>
                 <h2>{t('desktop.settings.theme')}</h2>
-                <p className="hint">{t('desktop.settings.themeHint')}</p>
+                <p className={SETTING_HINT}>{t('desktop.settings.themeHint')}</p>
               </div>
-              <SegmentedControl
-                role="group"
+              <Segmented
                 ariaLabel={t('desktop.settings.theme')}
                 options={(['system', 'light', 'dark'] as ThemePref[]).map((pref) => ({
                   value: pref,
@@ -132,13 +136,12 @@ export function SettingsPage({
         )}
 
         {section === 'editor' && (
-          <section className="setting-row">
+          <section className={SETTING_ROW}>
             <div>
               <h2>{t('desktop.settings.autosave')}</h2>
-              <p className="hint">{t('desktop.settings.autosaveHint')}</p>
+              <p className={SETTING_HINT}>{t('desktop.settings.autosaveHint')}</p>
             </div>
-            <SegmentedControl
-              role="group"
+            <Segmented
               ariaLabel={t('desktop.settings.autosave')}
               options={[
                 { value: 'on', label: t('pref.on') },
@@ -152,28 +155,28 @@ export function SettingsPage({
 
         {section === 'vault' && (
           <>
-            <section className="setting-row">
+            <section className={SETTING_ROW}>
               <div>
                 <h2>{t('desktop.settings.vaultLocation')}</h2>
-                <p className="setting-path">{root}</p>
-                <p className="hint">{t('desktop.settings.vaultHint', { count: noteCount })}</p>
+                <p className="m-0 font-mono text-xs leading-normal wrap-anywhere text-primary">{root}</p>
+                <p className={SETTING_HINT}>{t('desktop.settings.vaultHint', { count: noteCount })}</p>
               </div>
-              <div className="setting-actions">
-                <Button type="button" onClick={onMove}>
+              <div className="flex flex-none items-center gap-2">
+                <Button type="button" variant="outline" size="sm" onClick={onMove}>
                   {t('desktop.settings.moveVault')}
                 </Button>
                 {!isDefaultRoot && (
-                  <Button type="button" onClick={onReset}>
+                  <Button type="button" variant="outline" size="sm" onClick={onReset}>
                     {t('desktop.settings.resetVault')}
                   </Button>
                 )}
               </div>
             </section>
 
-            <section className="setting-row">
+            <section className={SETTING_ROW}>
               <div>
                 <h2>{t('desktop.settings.index')}</h2>
-                <p className="hint">{t('desktop.settings.indexHint')}</p>
+                <p className={SETTING_HINT}>{t('desktop.settings.indexHint')}</p>
               </div>
             </section>
           </>
@@ -181,10 +184,10 @@ export function SettingsPage({
 
         {section === 'browsers' && (
           <>
-            <section className="setting-row">
+            <section className={SETTING_ROW}>
               <div>
                 <h2>{t('desktop.settings.bridge')}</h2>
-                <p className="hint">{t('desktop.settings.bridgeHint')}</p>
+                <p className={SETTING_HINT}>{t('desktop.settings.bridgeHint')}</p>
               </div>
             </section>
             <InstallView />

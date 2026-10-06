@@ -23,10 +23,29 @@ import { SignInPanel } from './SignInPanel';
 import { t, LANGS, type LangPref } from '@meetcc/shared/i18n';
 import { applyLang, loadLangPref, saveLangPref } from '../lib/lang';
 import { loadMeetingLangPref, saveMeetingLangPref, type MeetingLangPref } from '../lib/meetingLang';
-import { Button, SegmentedControl, TextInput, useToast } from '@meetcc/ui';
+import { useToast } from '@meetcc/ui';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Segmented } from './Segmented';
+import {
+  Blocks,
+  Cpu,
+  Database,
+  FileCode,
+  Info,
+  Settings as SettingsIcon,
+  X,
+} from 'lucide-react';
 
 type Panel = 'provider' | 'integrations' | 'templates' | 'data' | 'version';
 
+const PANEL_ICON = {
+  provider: Cpu,
+  integrations: Blocks,
+  templates: FileCode,
+  data: Database,
+  version: Info,
+};
 // Looked up per render rather than frozen at module load, so switching the
 // language relabels the tabs without a reload.
 const PANEL_LABEL: Record<Panel, Parameters<typeof t>[0]> = {
@@ -212,27 +231,33 @@ export function SettingsView({
 
   return (
     <div className="settings">
-      <header className="toolbar">
-        <div className="toolbar-title">
-          <h1>{t('ext.settings.title')}</h1>
+      <header className="toolbar flex items-center justify-between p-3 border-b border-border/50">
+        <div className="toolbar-title flex items-center gap-2">
+          <SettingsIcon className="size-5 text-primary" />
+          <h1 className="text-base font-semibold text-foreground">{t('ext.settings.title')}</h1>
         </div>
         <nav className="tabs">
-          <SegmentedControl
+          <Segmented
             ariaLabel={t('ext.settings.sections')}
             role="tablist"
             options={(Object.keys(PANEL_LABEL) as Panel[]).map((p) => ({
               value: p,
               label: t(PANEL_LABEL[p]),
+              icon: PANEL_ICON[p],
             }))}
             value={panel}
             onChange={(value) => setPanel(value as Panel)}
           />
         </nav>
-        <Button onClick={onClose} aria-label={t('ext.settings.close')}>
-          ✕
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={onClose}
+          aria-label={t('ext.settings.close')}
+        >
+          <X className="size-4" />
         </Button>
       </header>
-
       <div className="settings-body">
         {panel === 'templates' && <TemplatesPanel />}
         {panel === 'data' && <DataPanel selectedMeeting={selectedMeeting} />}
@@ -314,7 +339,7 @@ export function SettingsView({
         {settings.provider !== 'builtin' && !preset.needsSignIn && (
           <label className="field">
             <span>{preset.needsKey ? t('ext.provider.apiKey') : t('ext.provider.apiKeyOptional')}</span>
-            <TextInput
+            <Input
               type="password"
               value={settings.apiKey}
               autoComplete="off"
@@ -341,7 +366,7 @@ export function SettingsView({
         {(preset.needsBaseUrl || settings.baseUrl) && (
           <label className="field">
             <span>{t('ext.provider.baseUrl')}</span>
-            <TextInput
+            <Input
               type="url"
               value={settings.baseUrl}
               placeholder={preset.baseUrl || 'https://your-endpoint/v1'}
@@ -357,7 +382,7 @@ export function SettingsView({
           <label className="field">
             <span>{t('ext.provider.model')}</span>
             <div className="field-row">
-              <TextInput
+              <Input
                 type="text"
                 list="model-options"
                 value={settings.model}
@@ -424,7 +449,7 @@ export function SettingsView({
               </Button>
             )}
             <span className="spacer" />
-            <Button variant="primary" onClick={save}>
+            <Button variant="default" onClick={save}>
               {t('ext.settings.save')}
             </Button>
           </div>

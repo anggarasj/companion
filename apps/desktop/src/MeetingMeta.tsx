@@ -11,7 +11,11 @@ import type { Vault, VaultNote } from '@meetcc/vault'
 import { askMeeting, createClient, resolveConfig, validateSettings, MAX_HISTORY_TURNS } from '@meetcc/ai'
 import type { ChatMessage, Meeting } from '@meetcc/shared/types'
 import { loadAiSettings } from './aiSettings'
-import { Button, TextInput, useToast } from '@meetcc/ui'
+import { Copy, LoaderCircle, ScrollText, SendHorizontal, Video } from 'lucide-react'
+import { useToast } from './toast'
+import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 /**
  * The id Chromium loads the shipped extension under.
@@ -53,6 +57,22 @@ export function parseTranscript(jsonl: string): TranscriptLine[] {
     }
   }
   return out
+}
+
+/** A delivered note and its transcript as the Meeting the AI pipeline reads. */
+export function meetingOf(note: VaultNote, lines: TranscriptLine[]): Meeting {
+  const startedAt = note.startedAt || lines[0]?.time || note.updatedAt
+  return {
+    id: note.sessionKey,
+    meta: { id: note.sessionKey, startedAt, lastSeenAt: lines[lines.length - 1]?.time || startedAt },
+    entries: lines,
+  }
+}
+
+/** Read a delivered note's transcript sidecar; empty when it has none. */
+export async function readTranscript(note: VaultNote, vault: Vault): Promise<TranscriptLine[]> {
+  if (!note.transcript) return []
+  return parseTranscript(await vault.io.readFile(vault.io.join(vault.io.root, note.transcript)))
 }
 
 const PLATFORM_LABELS: Record<string, string> = {
@@ -114,8 +134,8 @@ export function MeetingMeta({ note, vault }: { note: VaultNote; vault: Vault | n
     setBusy(true)
     setFailed(null)
     try {
-      const raw = await vault.io.readFile(vault.io.join(vault.io.root, note.transcript))
-      if (isCurrent()) setLines(parseTranscript(raw))
+      const read = await readTranscript(note, vault)
+      if (isCurrent()) setLines(read)
     } catch (e) {
       if (isCurrent()) setFailed(String(e))
     } finally {
@@ -149,12 +169,7 @@ export function MeetingMeta({ note, vault }: { note: VaultNote; vault: Vault | n
       if (!isCurrent()) return
       const problem = validateSettings(settings)
       if (problem) throw new Error(problem)
-      const startedAt = note.startedAt || lines[0].time
-      const meeting: Meeting = {
-        id: note.sessionKey,
-        meta: { id: note.sessionKey, startedAt, lastSeenAt: lines[lines.length - 1].time || startedAt },
-        entries: lines,
-      }
+      const meeting = meetingOf(note, lines)
       const result = await askMeeting(
         createClient(resolveConfig(settings)),
         meeting,
@@ -188,21 +203,29 @@ export function MeetingMeta({ note, vault }: { note: VaultNote; vault: Vault | n
     }
   }
 
+  const hint = 'my-1 text-xs text-muted-foreground'
+
   return (
-    <section className="meeting-meta">
-      <div className="mm-row">
-        <span className="mm-platform">{PLATFORM_LABELS[note.platform] ?? note.platform}</span>
-        {note.startedAt && <span className="mm-when">{formatDateTime(note.startedAt)}</span>}
+    <section className="mb-3.5 rounded-xl border bg-sunken px-3 py-2.5">
+      <div className="mb-2 flex items-center gap-2.5">
+        <span className="flex items-center gap-1.5 font-mono text-[10px] font-semibold uppercase leading-none tracking-widest text-primary">
+          <Video className="size-3.5" aria-hidden="true" />
+          {PLATFORM_LABELS[note.platform] ?? note.platform}
+        </span>
+        {note.startedAt && <span className="text-xs text-muted-foreground">{formatDateTime(note.startedAt)}</span>}
         {note.transcript && (
-          <Button type="button" className="mm-link" onClick={() => void toggle()}>{open ? t('desktop.meeting.hideTranscript') : t('desktop.meeting.showTranscript')}</Button>
+          <Button type="button" variant="link" size="xs" className="ml-auto" onClick={() => void toggle()}>
+            <ScrollText />
+            {open ? t('desktop.meeting.hideTranscript') : t('desktop.meeting.showTranscript')}
+          </Button>
         )}
       </div>
 
       {participants.length > 0 && (
-        <div className="mm-people">
-          <span className="mm-label">{t('desktop.meeting.participants')}</span>
+        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+          <span className="font-mono text-[9.5px] font-semibold uppercase leading-none tracking-widest text-muted-foreground">{t('desktop.meeting.participants')}</span>
           {participants.map((p) => (
-            <span key={p} className="mm-person">
+            <span key={p} className="rounded-full border bg-muted px-[7px] py-0.5 text-xs">
               {p}
             </span>
           ))}
@@ -213,51 +236,56 @@ export function MeetingMeta({ note, vault }: { note: VaultNote; vault: Vault | n
           the OS can launch, and the extension runs in a dedicated profile that
           the default browser is not. Copying is the only form of this that
           actually works, so the field says what it is. */}
-      <div className="mm-link-row">
-        <span className="mm-label">{t('desktop.meeting.openInExtension')}</span>
-        <TextInput className="mm-url" readOnly value={url} onFocus={(e) => e.target.select()} />
-        <Button type="button" onClick={copy}>
+      <div className="flex items-center gap-2">
+        <span className="font-mono text-[9.5px] font-semibold uppercase leading-none tracking-widest text-muted-foreground">{t('desktop.meeting.openInExtension')}</span>
+        <Input className="h-[34px] min-w-0 flex-1 font-mono text-[11px]" readOnly value={url} onFocus={(e) => e.target.select()} />
+        <Button type="button" variant="outline" size="sm" onClick={copy}>
+          <Copy />
           {t('desktop.meeting.copyLink')}
         </Button>
       </div>
 
       {open && (
-        <div className="mm-transcript">
-          {busy && <p className="hint">{t('desktop.meeting.loadingTranscript')}</p>}
-          {failed && <p className="hint">{failed}</p>}
-          {lines?.length === 0 && <p className="hint">{t('desktop.meeting.emptyTranscript')}</p>}
+        <div className="mt-2.5 max-h-[260px] overflow-y-auto border-t pt-2.5">
+          {busy && <p className={hint}>{t('desktop.meeting.loadingTranscript')}</p>}
+          {failed && <p className={hint}>{failed}</p>}
+          {lines?.length === 0 && <p className={hint}>{t('desktop.meeting.emptyTranscript')}</p>}
           {lines?.map((l, i) => (
-            <p key={i} className="mm-line">
-              <span className="mm-time">{l.time ? l.time.slice(11, 16) : ''}</span>
-              <span className="mm-speaker">{l.speaker}</span>
+            <p key={i} className="mb-1 mt-0 grid grid-cols-[42px_110px_1fr] gap-2 text-[12.5px] leading-normal">
+              <span className="font-mono text-[10px] leading-[1.7] text-muted-foreground">{l.time ? l.time.slice(11, 16) : ''}</span>
+              <span className="truncate text-primary">{l.speaker}</span>
               <span>{l.text}</span>
             </p>
           ))}
           {!!lines?.length && (
-            <div className="mm-ask">
-              <form className="mm-ask-form" onSubmit={(event) => void ask(event)}>
-                <label htmlFor={`meeting-question-${note.id}`}>{t('desktop.meeting.askQuestion')}</label>
-                <div className="mm-ask-row">
-                  <TextInput
+            <div className="mt-3.5 border-t pt-3">
+              <form onSubmit={(event) => void ask(event)}>
+                <label className="mb-1.5 block text-xs text-muted-foreground" htmlFor={`meeting-question-${note.id}`}>
+                  {t('desktop.meeting.askQuestion')}
+                </label>
+                <div className="flex gap-2">
+                  <Input
+                    className="min-w-0 flex-1"
                     id={`meeting-question-${note.id}`}
                     value={question}
                     placeholder={t('desktop.meeting.askPlaceholder')}
                     onChange={(event) => setQuestion(event.target.value)}
                     disabled={asking}
                   />
-                  <Button type="submit" disabled={asking || !question.trim()}>
+                  <Button type="submit" size="sm" className="h-9" disabled={asking || !question.trim()}>
+                    {asking ? <LoaderCircle className="animate-spin" /> : <SendHorizontal />}
                     {asking ? t('desktop.meeting.asking') : t('desktop.meeting.ask')}
                   </Button>
                 </div>
               </form>
-              {askError && <p className="mm-ask-error" role="alert">{askError}</p>}
+              {askError && <p className="text-xs text-destructive" role="alert">{askError}</p>}
               {history.map((message, index) => (
-                <div key={`${message.time}-${index}`} className={`mm-answer mm-${message.role}`}>
-                  <p>{message.content}</p>
+                <div key={`${message.time}-${index}`} className={cn('mt-2.5 text-xs', message.role === 'user' && 'text-muted-foreground')}>
+                  <p className="m-0">{message.content}</p>
                 </div>
               ))}
               {latestAnswer?.result?.evidence.slice(0, 4).map((evidence, sourceIndex) => (
-                <p key={`${evidence.startTime}-${sourceIndex}`} className="mm-evidence">
+                <p key={`${evidence.startTime}-${sourceIndex}`} className="mb-0 mt-[5px] text-[11px] text-muted-foreground">
                   {evidence.startTime.slice(11, 16)} · {evidence.speakers.join(', ')} — {evidence.preview}
                 </p>
               ))}

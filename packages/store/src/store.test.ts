@@ -79,6 +79,11 @@ describe('sessions', () => {
     expect(store.getSession('tms-abc123#1000')!.platform).toBe('teams');
   });
 
+  it('detects Zoom Web from the room id', () => {
+    store.upsertSession({ id: 'zm-123456789#1000' });
+    expect(store.getSession('zm-123456789#1000')!.platform).toBe('zoom');
+  });
+
   it('never overwrites a title with an empty one', () => {
     store.upsertSession({ id: 's#1', title: 'Incident Freeport' });
     store.upsertSession({ id: 's#1' });

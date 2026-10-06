@@ -15,7 +15,12 @@ import type { ProviderId, Settings } from '@meetcc/shared/types'
 import { t } from '@meetcc/shared/i18n'
 import { Select } from './Select'
 import { loadAiSettings, saveAiSettings } from './aiSettings'
-import { Button, TextInput, useToast } from '@meetcc/ui'
+import { ExternalLink, PlugZap, RefreshCw, Save } from 'lucide-react'
+import { useToast } from './toast'
+import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { SETTING_HINT, SETTING_ROW } from '@/components/settingStyles'
 
 const PROVIDERS = Object.entries(PROVIDER_PRESETS) as [ProviderId, (typeof PROVIDER_PRESETS)[ProviderId]][]
 
@@ -34,7 +39,7 @@ export function AIProviderPanel() {
     [settings],
   )
 
-  if (!settings || !preset) return <p className="hint">{t('desktop.ai.loading')}</p>
+  if (!settings || !preset) return <p className={SETTING_HINT}>{t('desktop.ai.loading')}</p>
 
   const set = (patch: Partial<Settings>): void => setSettings({ ...settings, ...patch })
 
@@ -87,12 +92,13 @@ export function AIProviderPanel() {
 
   return (
     <>
-      <section className="setting-row">
+      <section className={SETTING_ROW}>
         <div>
           <h2>{t('desktop.ai.title')}</h2>
-          <p className="hint">{t('desktop.ai.intro')}</p>
+          <p className={SETTING_HINT}>{t('desktop.ai.intro')}</p>
         </div>
         <Select
+          className="w-[260px] flex-none"
           label={t('desktop.ai.provider')}
           value={settings.provider}
           options={PROVIDERS.map(([id, p]) => ({ value: id, label: p.label }))}
@@ -101,31 +107,34 @@ export function AIProviderPanel() {
       </section>
 
       {preset.needsSignIn && (
-        <section className="setting-row">
+        <section className={SETTING_ROW}>
           <div>
             <h2>{t('desktop.ai.signIn')}</h2>
             {/* Said plainly rather than shipped half-done: the flow opens a
                 browser and needs the redirect pasted back, and that belongs in
                 one piece of work with its own testing. */}
-            <p className="hint">{t('desktop.ai.signInUnavailable')}</p>
+            <p className={SETTING_HINT}>{t('desktop.ai.signInUnavailable')}</p>
           </div>
           <Button
             type="button"
+            variant="outline"
+            size="sm"
             onClick={() => void invoke('open_external', { url: 'https://github.com/suiflex/companion' })}
           >
+            <ExternalLink />
             {t('desktop.ai.readMore')}
           </Button>
         </section>
       )}
 
       {settings.provider !== 'builtin' && !preset.needsSignIn && (
-        <section className="setting-row">
+        <section className={SETTING_ROW}>
           <div>
             <h2>{preset.needsKey ? t('desktop.ai.apiKey') : t('desktop.ai.apiKeyOptional')}</h2>
-            <p className="hint">{t('desktop.ai.keychainHint')}</p>
+            <p className={SETTING_HINT}>{t('desktop.ai.keychainHint')}</p>
           </div>
-          <TextInput
-            className="text-input"
+          <Input
+            className="w-[260px] flex-none"
             type="password"
             autoComplete="off"
             value={settings.apiKey}
@@ -136,13 +145,13 @@ export function AIProviderPanel() {
       )}
 
       {(preset.needsBaseUrl || settings.baseUrl) && (
-        <section className="setting-row">
+        <section className={SETTING_ROW}>
           <div>
             <h2>{t('desktop.ai.baseUrl')}</h2>
-            <p className="hint">{preset.baseUrl || 'https://your-endpoint/v1'}</p>
+            <p className={SETTING_HINT}>{preset.baseUrl || 'https://your-endpoint/v1'}</p>
           </div>
-          <TextInput
-            className="text-input"
+          <Input
+            className="w-[260px] flex-none"
             type="url"
             value={settings.baseUrl}
             placeholder={preset.baseUrl}
@@ -152,21 +161,24 @@ export function AIProviderPanel() {
       )}
 
       {settings.provider !== 'builtin' && (
-        <section className="setting-row">
+        <section className={SETTING_ROW}>
           <div>
             <h2>{t('desktop.ai.model')}</h2>
-            <p className="hint">
+            <p className={SETTING_HINT}>
               {models.length
                 ? t('desktop.ai.modelsAvailable', { count: models.length })
                 : t('desktop.ai.modelsPrompt')}
             </p>
             {showsAsChips(models) && (
-              <div className="model-chips">
+              <div className="mt-2 flex flex-wrap gap-1.5">
                 {models.map((m) => (
                   <button
                     key={m}
                     type="button"
-                    className={m === settings.model ? 'model-chip active' : 'model-chip'}
+                    className={cn(
+                      'rounded-full border bg-sunken px-2.5 py-0.5 text-xs text-muted-foreground hover:border-muted-foreground hover:text-foreground',
+                      m === settings.model && 'border-primary text-primary hover:border-primary hover:text-primary',
+                    )}
                     aria-pressed={m === settings.model}
                     onClick={() => set({ model: m })}
                   >
@@ -176,9 +188,9 @@ export function AIProviderPanel() {
               </div>
             )}
           </div>
-          <div className="setting-actions">
-            <TextInput
-              className="text-input"
+          <div className="flex flex-none items-center gap-2">
+            <Input
+              className="w-[260px] flex-none"
               list="desktop-model-options"
               value={settings.model}
               placeholder={preset.model}
@@ -189,23 +201,26 @@ export function AIProviderPanel() {
                 <option key={m} value={m} />
               ))}
             </datalist>
-            <Button type="button" disabled={busy !== ''} onClick={() => void loadModelList()}>
+            <Button type="button" variant="outline" size="sm" disabled={busy !== ''} onClick={() => void loadModelList()}>
+              <RefreshCw className={cn(busy === 'models' && 'animate-spin')} />
               {busy === 'models' ? t('desktop.ai.loadingModels') : t('desktop.ai.loadModels')}
             </Button>
           </div>
         </section>
       )}
 
-      <section className="setting-row">
+      <section className={SETTING_ROW}>
         <div>
           <h2>{t('desktop.ai.check')}</h2>
-          <p className="hint">{t('desktop.ai.checkHint')}</p>
+          <p className={SETTING_HINT}>{t('desktop.ai.checkHint')}</p>
         </div>
-        <div className="setting-actions">
-          <Button type="button" disabled={busy !== ''} onClick={() => void test()}>
+        <div className="flex flex-none items-center gap-2">
+          <Button type="button" variant="outline" size="sm" disabled={busy !== ''} onClick={() => void test()}>
+            <PlugZap />
             {busy === 'test' ? t('desktop.ai.testing') : t('desktop.ai.test')}
           </Button>
-          <Button type="button" variant="primary" disabled={busy !== ''} onClick={() => void save()}>
+          <Button type="button" size="sm" disabled={busy !== ''} onClick={() => void save()}>
+            <Save />
             {t('desktop.ai.save')}
           </Button>
         </div>

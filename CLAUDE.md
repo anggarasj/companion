@@ -66,7 +66,7 @@ packages/ai/                       provider adapters, prompts, rate limit
 packages/meeting/                  pipeline, Ask, continuity, import, trackers
 packages/store/                    SQLite + FTS5 for meetings (wasm or native)
 packages/vault/                    .md vault: note format, bridge, vault FTS
-packages/ui/                       cross-app React components, styled from extension
+packages/ui/                       extension React components (desktop no longer uses it)
 packages/mcp/  packages/sync-server/  packages/exporters/
 scripts/                           the installer CLI and its helpers
 ```
@@ -79,8 +79,8 @@ Inside `apps/desktop/src-tauri/src/`, one module per concern: `vault.rs` file
 I/O, `settings.rs` the settings file and the OS keychain, `host.rs` the native
 -messaging mode, `install.rs` browser registration, `lib.rs` the command list.
 
-React UI lives in `apps/*`; components shared by both apps live in
-`packages/ui`. Every other `packages/*` module stays framework-free.
+React UI lives in `apps/*`; the extension's controls live in `packages/ui`.
+Every other `packages/*` module stays framework-free.
 
 **Rust owns no domain logic.** It is file I/O, IPC, the keychain and the HTTP
 transport; vault logic is TypeScript in `packages/vault` so the host and the
@@ -92,13 +92,17 @@ Where to go:
 
 | Change | Start at |
 | --- | --- |
-| capture broke on Meet/Teams | `apps/extension/public/content.js`, table `KNOWN` |
+| capture broke on Meet/Teams/Zoom | `apps/extension/public/content.js`, table `KNOWN` for Meet |
 | meeting → note delivery | `apps/extension/src/background.ts` `deliverToDesktop`, then `packages/vault/src/bridge.ts` |
 | host registration, from the CLI | `scripts/nativeHost.mjs`, called from `scripts/companion.mjs` |
 | host registration, from the app | `apps/desktop/src-tauri/src/install.rs` + `InstallView.tsx` |
 | note file format | `packages/vault/src/note.ts` (see Conventions) |
 | desktop UI | `apps/desktop/src/App.tsx`, editor in `NoteEditor.tsx` |
-| shared UI components, variants and palette | `packages/ui/src/` and `packages/ui/src/styles.css` |
+| editor markdown, slash menu, editor AI | `apps/desktop/src/editor/{extensions,slashCommand,editorAI}.ts` |
+| AI-written documents, Cmd+K | `apps/desktop/src/{AIComposer,CommandPalette}.tsx`, file name from `docPath` in `saveTarget.ts` |
+| the AI panel: vault agent, tools, staged changes | `apps/desktop/src/agent/` (`runner`, `tools`, `changes`, `prompt`), UI in `AISidebar.tsx` |
+| extension UI components and palette | `packages/ui/src/` and `packages/ui/src/styles.css` |
+| desktop styling, shadcn components, theme tokens | `apps/desktop/src/components/ui/`, `apps/desktop/src/index.css` |
 | where a save lands | `apps/desktop/src/saveTarget.ts` — pure, and tested |
 | the desktop sidebar tree | `apps/desktop/src/{NoteTree.tsx,tree.ts}` |
 | desktop Settings window and vault switch | `apps/desktop/src/{SettingsWindow.tsx,SettingsPage.tsx,openSettingsWindow.ts,settingsEvents.ts}`, then `App.tsx` for dirty-note confirmation |
@@ -110,14 +114,17 @@ Where to go:
 ## Capture
 
 Live capture runs in `apps/extension/public/content.js` (plain JS, no build
-step, shipped as-is). Two platforms:
+step, shipped as-is). Three platforms:
 
 - **Google Meet** — the implicit branch; selector table `KNOWN` near the top,
   plus a class-independent avatar heuristic as fallback.
 - **Microsoft Teams** — `teams.microsoft.com`, `teams.live.com`,
   `teams.cloud.microsoft`; gated by the `TEAMS` boolean at the top of the file.
+- **Zoom Web** — `*.zoom.us/wc/*` and `*.zoom.us/j/*`; reads live subtitle overlay rows. The overlay
+  may contain only an avatar or initial, so full speaker names are not guaranteed.
+  Turn captions on in Zoom first; the off-state control is not auto-clicked.
 
-**Zoom is import-only** (transcript file or audio), no live capture — see
+Zoom transcript files and audio can still be imported through
 `packages/meeting/src/import.ts`.
 
 Meet rotates obfuscated class names every few months, so `KNOWN` rots. When
@@ -240,10 +247,15 @@ key prefix and the `rapat` tag are data, not copy.
   adding a platform needs no migration, but it is derived from the meeting-id
   prefix in `store.ts`, not from a URL.
 - Prefer the existing dependency set. New deps need a reason.
-- **Cross-app UI starts in the extension.** When a component is used by both
-  apps, put its reusable behavior and styling in `packages/ui` and use the
-  extension as the visual reference. Keep page- and feature-specific components
-  in their app; only share controls whose behavior and contract match.
+- **The extension is the visual reference; the desktop is Tailwind v4 +
+  shadcn.** The desktop has no hand-written CSS: `index.css` holds only the
+  theme tokens (the extension's palette under shadcn's names), and every rule
+  is a utility on the element. Components come from `npx shadcn add` into
+  `apps/desktop/src/components/ui` (run it from `apps/desktop`); icons are
+  `lucide-react`, bundled, so they work offline. Rendered markdown has no
+  browser defaults under Tailwind's preflight — `editor/prose.ts` restores
+  them. Icon-only controls get `components/Tip.tsx`, because WKWebView never
+  shows a `title` tooltip.
 - **The desktop WebView cannot reach the network.** Its CSP is
   `connect-src 'self' ipc:` and cannot be widened to a host list, because
   provider base URLs are typed by the user. Outbound calls leave through Rust:
@@ -266,8 +278,8 @@ key prefix and the `rapat` tag are data, not copy.
   `chrome.*` and storage calls.
 - **Three app helpers remain hand-synced**, not shared: `theme.ts`, `lang.ts`
   and `sponsor.ts` exist in both apps because they depend on app-specific
-  storage or platform APIs. Cross-app React controls, toast feedback, and the
-  extension-led design tokens belong in `packages/ui`.
+  storage or platform APIs. The palette in `packages/ui/src/styles.css` and
+  `apps/desktop/src/index.css` is hand-synced the same way.
 - **A vault frontmatter key lives in four places** in
   `packages/vault/src/note.ts`: the `VaultNote` interface, `QUOTED` (or
   `LISTS`), `ORDER`, and the return literal of `noteFromMarkdown`. Miss any one
@@ -277,10 +289,77 @@ key prefix and the `rapat` tag are data, not copy.
   no YAML dependency, no nested maps, no block scalars.
 - Notes are the canonical data; the SQLite/FTS index over them is derived,
   in-memory and rebuilt per session, so its schema can change freely.
-- The desktop note body is edited with Milkdown, which is markdown-native — the
-  document round-trips through remark, so the vault keeps storing plain `.md`.
-  It normalizes as it serializes, so the first save of an old note can rewrite
-  list markers and escaping.
+- The desktop note body is edited with Tiptap, used headless: markdown in via
+  `@tiptap/markdown` (`contentType: 'markdown'`), markdown out via
+  `getMarkdown()` — never HTML or Tiptap JSON on disk. The extension list lives
+  in one place, `apps/desktop/src/editor/extensions.ts`, shared with
+  `markdown.test.ts`; a node only joins it with a markdown parse *and*
+  serialize, and the round-trip test grows a case. That file also patches the
+  serializer's escaping (stock output rewrites `[12:04]` to `\[12:04\]` and `<`
+  to `&lt;`), keeps raw HTML as literal text, writes an empty list item as `-`
+  (marked reads `- ` back as text), and corrects an upstream off-by-one in
+  the ordered-list tokenizer that pushed code inside `1.` items one space
+  deeper per save. All of these were invisible in toy cases and found by
+  round-tripping this repo's own 42 `.md` files. The first save of an old note
+  can still normalize list markers (`*` → `-`) and emphasis (`_x_` → `*x*`).
+- Editor AI has two surfaces with different contracts. The inline menu
+  (selection, Cmd+J, slash) is one cheap call: it proposes, writes nothing
+  before Accept, and locks the editor read-only while it runs so the range
+  asked about is the range the answer lands in. Its prompts and budgets live
+  in `editor/editorAI.ts` (no React, no Tiptap); applying is
+  `editor/editorOps.ts`. Cancelling stops waiting and discards the answer —
+  `AIClient.complete` takes no signal, so the HTTP request runs to its timeout.
+- The right-hand panel (`AISidebar.tsx`) is the **Vault Agent**, in
+  `apps/desktop/src/agent/`: a bounded loop (`runner.ts`, 8 model calls max)
+  over `AIClient.complete` with a JSON protocol, not provider function
+  calling, so every provider works. Its tools (`tools.ts`) only read — FTS
+  search over the derived index, read a note, list a folder, the open
+  document — and every one enforces the scope picked in the panel. The model
+  never writes: a final answer's `changes` are validated in `changes.ts`
+  (vault-relative `.md` paths only, no `..`/absolute/dot folders, only notes
+  the agent read, never a delivered meeting other than the open one) and come
+  back *staged*. Apply re-checks each change against the note as it is now
+  (`replace_text` needs its anchor exactly once, `replace_body` needs the
+  body unchanged since the read) and marks it stale otherwise; Undo of a set
+  is all-or-nothing on the same check. Sources shown are only notes the
+  agent actually read. Vault text goes into the prompt JSON-encoded with `<`
+  escaped, inside tagged blocks, so a note cannot close its block or pose as
+  an instruction. The open note is read from and written to the live editor
+  (`vaultWorkspace` in `tools.ts`), never to its file underneath it — the
+  editor's save, and its copy rule for meetings, still decides what reaches
+  disk. "Write with AI" uses the same agent for retrieval
+  (`gatherSources`) and `writeDocument` drafts, critiques against the sources
+  and revises.
+- The agent also reads Excalidraw boards and PDFs, and creates and edits
+  boards; it never writes a PDF. A board reaches the model as an outline
+  (`boardOutline` in `board.ts`, one line per element with its id), and the
+  model writes nodes, edges, relabels and removals by id that `createBoard` /
+  `editBoard` expand into real elements — never raw Excalidraw JSON. Board
+  staleness is "every id it names is still there", and undo compares outlines
+  (`sameBoard`), because Excalidraw re-serializes a board it loads. A board on
+  screen is changed through `Whiteboard`'s `onBoard` handle, which writes the
+  file and remounts the scene; writing underneath it would be overwritten by
+  the next stroke. PDF text comes from `pdfText.ts` (pdfjs-dist, legacy build,
+  loaded on first use, worker bundled as a file for the CSP). Boards and PDFs
+  are not in the FTS index; search matches them by file name only.
+  Sequence, class and flowchart diagrams on a board go through Mermaid: the
+  model writes `mermaid`, and `mermaidBoard.ts` converts it the way
+  Excalidraw's own dialog does (`@excalidraw/mermaid-to-excalidraw`, browser
+  only, injected as `Workspace.mermaid`). Only converter output becomes
+  elements; anything element-shaped the model sends is ignored.
+- The sidebar's vault list (`vaults.ts`, localStorage) is labels over folders:
+  a vault's name is not its folder name, hiding keeps it, removing only
+  forgets it. Switching probes first and refuses a folder that is gone —
+  `set_vault_root` would recreate it empty. Page `icon`/`cover` are
+  frontmatter; uploaded images are copied into the vault's `.assets/` by
+  `import_vault_asset` and read back by `read_vault_bytes`.
+  Dot folders are hidden from the tree.
+- The panel's model and effort pickers are a per-install override for editor
+  AI (`loadSessionAI` in `aiSettings.ts`, localStorage), not a provider
+  setting: the meeting pipeline keeps the model saved in Settings. Effort is
+  sent only to models that take it — `effortKind` in `providers.ts` gates it
+  by model name, because OpenAI answers `reasoning_effort` on gpt-4o with a
+  400. Local models never receive it.
 - Notes written in the app carry `platform: 'manual'`; delivered ones carry the
   meeting platform. That one field decides everything about a note: whether the
   inbox lists it, how the sidebar marks it, and — the part with teeth —

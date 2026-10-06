@@ -1,14 +1,13 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
-import { ToastProvider } from '@meetcc/ui';
+import { Toaster } from '@/components/ui/sonner';
 import { SettingsWindow } from './SettingsWindow';
 import { applyTheme, loadThemePref } from './theme';
 import { applyLang, loadLangPref } from './lang';
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
 import { setFetch, setOAuthFetch } from '@meetcc/ai';
-import '@meetcc/ui/styles.css';
-import './styles.css';
+import './index.css';
 
 // Before first paint: a theme or language applied after mount is a flash of
 // the wrong one.
@@ -27,8 +26,7 @@ const Root = new URLSearchParams(location.search).get('window') === 'settings'
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
-    <ToastProvider>
-      <Root />
-    </ToastProvider>
+    <Root />
+    <Toaster position="bottom-right" />
   </React.StrictMode>,
 );

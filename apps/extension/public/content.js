@@ -1,14 +1,16 @@
-// Captures Google Meet / Microsoft Teams (web) CC captions into a transcript.
+// Captures Google Meet / Microsoft Teams / Zoom Web captions into a transcript.
 // Platform is auto-detected from the host; everything downstream (storage,
 // pipeline, AI, exporters) is platform-agnostic and keys off meetingId.
 // Meet strategy: known selector sets (obfuscated classes churn) + heuristic.
 // Teams strategy: stable data-tid attributes on the caption virtual list.
+// Zoom strategy: subtitle overlay rows; the overlay does not expose full names.
 // Diagnostics: filter DevTools console on [MeetCC].
 
 const TEAMS = /teams\.(microsoft\.com|live\.com|cloud\.microsoft)/.test(
   location.host,
 )
-const TAG = TEAMS ? '[MeetCC:teams]' : '[MeetCC]'
+const ZOOM = location.hostname === 'zoom.us' || location.hostname.endsWith('.zoom.us')
+const TAG = TEAMS ? '[MeetCC:teams]' : ZOOM ? '[MeetCC:zoom]' : '[MeetCC]'
 
 // This file ships as-is with no build step, so it cannot import the shared
 // catalogue. Its visible strings get an inline copy instead, reading the same
@@ -162,7 +164,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   entries = updated
 })
 
-// A Meet/Teams link is a ROOM, not a meeting: the same link is reused every
+// A Meet/Teams/Zoom link is a ROOM, not a meeting: the same link is reused every
 // week. The session id (room + start) is decided by the service worker, which
 // can see what is already stored — rejoining within a few minutes resumes the
 // running session, a new day starts a new one. Resolution is async, so until
@@ -172,11 +174,14 @@ function adoptSession(id) {
   initPending = false
   if (meetingId || dead) return
   meetingId = id
-  storageKey = `transcript:${id}`
   metaKey = `meta:${id}`
+  const key = `transcript:${id}`
   try {
-    chrome.storage.local.get(storageKey, (r) => {
-      if (Array.isArray(r[storageKey])) entries = r[storageKey].concat(entries)
+    chrome.storage.local.get(key, (r) => {
+      const buffered = entries
+      if (Array.isArray(r[key])) entries = r[key].concat(buffered)
+      storageKey = key
+      if (buffered.length) store({ [key]: entries })
     })
   } catch {
     die()
@@ -202,7 +207,10 @@ function initMeeting(roomId) {
   }
 }
 
-if (!TEAMS) {
+if (ZOOM) {
+  const code = location.pathname.match(/^\/(?:wc\/(?:join\/)?|j\/)(\d+)(?:\/|$)/)?.[1]
+  if (code) initMeeting('zm-' + code)
+} else if (!TEAMS) {
   initMeeting(location.pathname.replace(/\//g, '') || 'meet')
 } else {
   const m = decodeURIComponent(location.href).match(
@@ -213,9 +221,13 @@ if (!TEAMS) {
 
 // CC state = captions region mounted in DOM (locale-independent, unlike aria-label)
 function ccOn() {
-  return TEAMS
-    ? !!document.querySelector('[data-tid="closed-caption-v2-window-wrapper"]')
-    : !!document.querySelector('div[jscontroller="KPn5nb"], .vNKgIf')
+  if (TEAMS) return !!document.querySelector('[data-tid="closed-caption-v2-window-wrapper"]')
+  if (ZOOM) {
+    const label = zoomCcButton()?.getAttribute('aria-label') || ''
+    return !!document.querySelector('.live-transcription-subtitle__overlay-container') ||
+      /hide (captions|subtitles|text)|sembunyikan teks/i.test(label)
+  }
+  return !!document.querySelector('div[jscontroller="KPn5nb"], .vNKgIf')
 }
 
 function knownRows() {
@@ -293,15 +305,120 @@ function teamsRows() {
   return rows.length ? { via: 'teams data-tid', rows } : null
 }
 
+const zoomUnnamed = new Map()
+const zoomNamesByAvatar = new Map()
+let zoomNamesByInitial = new Map()
+let zoomParticipantsCount = 0
+function zoomSpeaker(avatar) {
+  if (!avatar) return '?'
+  if (!zoomUnnamed.has(avatar)) zoomUnnamed.set(avatar, `Speaker ${zoomUnnamed.size + 1}`)
+  return zoomUnnamed.get(avatar)
+}
+
+function zoomParticipantsButton() {
+  return document.querySelector('svg.SvgParticipants')?.closest('button')
+}
+
+function zoomLearnNames() {
+  const button = zoomParticipantsButton()
+  const count = Number(button?.querySelector('.footer-button__number-counter')?.textContent)
+  if (count && count !== zoomParticipantsCount) {
+    zoomParticipantsCount = count
+    zoomNamesByInitial.clear()
+  }
+  const list = document.querySelector('#participants-unified-list')
+  if (!list) return false
+  zoomOpenClicks = 0
+  const people = [...list.querySelectorAll('.participants-li')]
+  const initials = new Map()
+  for (const person of people) {
+    const name = person.querySelector('.participants-item__display-name')?.textContent.trim()
+    const icon = person.querySelector('.participants-item__avatar')
+    if (!name || !icon) continue
+    if (icon.tagName === 'IMG') {
+      zoomNamesByAvatar.set(icon.src,
+        zoomNamesByAvatar.has(icon.src) && zoomNamesByAvatar.get(icon.src) !== name ? null : name)
+    } else {
+      const key = `${icon.textContent.trim()}|${icon.style.backgroundColor}`
+      initials.set(key, initials.has(key) && initials.get(key) !== name ? null : name)
+    }
+  }
+  if (count && people.length === count) zoomNamesByInitial = initials
+  let changed = false
+  for (const entry of entries) {
+    const name = zoomNamesByAvatar.get(entry.avatar)
+    if (name && entry.speaker.startsWith('Speaker ') && entry.speaker !== name) {
+      entry.speaker = name
+      changed = true
+    }
+  }
+  return changed
+}
+
+function zoomRows() {
+  const overlay = document.querySelector('.live-transcription-subtitle__content')
+  if (!overlay) return null
+  const namesChanged = zoomLearnNames()
+  const rows = []
+  for (const b of overlay.querySelectorAll('[id="live-transcription-subtitle"]')) {
+    const text = b.querySelector('.live-transcription-subtitle__item')?.textContent.trim()
+    if (!text) continue
+    const icon = b.querySelector('.zmu-data-selector-item__icon')
+    const avatar = b.querySelector('img')?.src || ''
+    const fallback = icon?.textContent.trim() || zoomSpeaker(avatar)
+    const initialKey = `${icon?.textContent.trim()}|${icon?.style.backgroundColor}`
+    const speaker = icon?.getAttribute('title') || icon?.getAttribute('aria-label') ||
+      icon?.getAttribute('alt') || zoomNamesByAvatar.get(avatar) ||
+      zoomNamesByInitial.get(initialKey) || fallback
+    rows.push({ el: b, speaker, avatar, text, fallback })
+  }
+  return rows.length ? { via: 'zoom subtitle overlay', rows, namesChanged } : null
+}
+
+/** The same caption among the last few captured, if it is already there. */
+function recentDuplicate(speaker, avatar, text) {
+  return entries.slice(-8).find((e) => e.speaker === speaker && e.text === text && (!ZOOM || e.avatar === avatar))
+}
+
+function captureRows(found) {
+  let dirty = !!found.namesChanged
+  for (const { el, speaker, avatar, text, fallback } of found.rows) {
+    let entry = seen.get(el)
+    if (entry && ZOOM && entry.speaker === fallback && speaker !== fallback && entry.avatar === avatar) {
+      entry.speaker = speaker
+      dirty = true
+    }
+    if (entry && ZOOM && (entry.speaker !== speaker || entry.avatar !== avatar)) entry = null
+    if (!entry) {
+      // Teams virtual list recycles/remounts DOM nodes on scroll: an already
+      // captured caption can come back as a fresh element. Re-adopt, not dup.
+      const dup = recentDuplicate(speaker, avatar, text)
+      if (dup) {
+        seen.set(el, dup)
+        continue
+      }
+      entry = { speaker, avatar, text, time: new Date().toISOString() }
+      seen.set(el, entry)
+      entries.push(entry)
+      dirty = true
+    } else if (entry.text !== text) {
+      // Caption recognition can revise earlier words, not only append.
+      entry.text = text
+      dirty = true
+    }
+  }
+  return dirty
+}
+
 let idleTicks = 0
 
 timers.push(
   setInterval(() => {
     if (dead) return
-    const found = TEAMS ? teamsRows() : knownRows() || heuristicRows()
+    const found = ZOOM ? zoomRows() : TEAMS ? teamsRows() : knownRows() || heuristicRows()
 
     if (!found) {
-      if (++idleTicks === 30 && entries.length === 0 && !TEAMS) {
+      if (++idleTicks === 30 && entries.length === 0 && !TEAMS && !ZOOM) {
         const region = document.querySelector(
           'div[jscontroller="KPn5nb"], .vNKgIf',
         )
@@ -319,39 +436,16 @@ timers.push(
       return
     }
     idleTicks = 0
-    if (!meetingId) initMeeting('tms-' + Date.now()) // Teams, no id in URL
+    if (!meetingId) initMeeting((ZOOM ? 'zm-' : 'tms-') + Date.now())
 
     if (found.via !== lastVia) {
       lastVia = found.via
       console.log(TAG, 'capturing via:', found.via)
     }
 
-    let dirty = false
-    for (const { el, speaker, avatar, text } of found.rows) {
-      let entry = seen.get(el)
-      if (!entry) {
-        // Teams virtual list recycles/remounts DOM nodes on scroll: an already
-        // captured caption can come back as a fresh element. Re-adopt, not dup.
-        const dup = entries
-          .slice(-8)
-          .find((e) => e.speaker === speaker && e.text === text)
-        if (dup) {
-          seen.set(el, dup)
-          continue
-        }
-        entry = { speaker, avatar, text, time: new Date().toISOString() }
-        seen.set(el, entry)
-        entries.push(entry)
-        dirty = true
-      } else if (entry.text !== text) {
-        // caption grows in place while the person keeps talking
-        entry.text = text
-        dirty = true
-      }
-    }
-    if (dirty) {
-      // storageKey is null until the session id comes back; the next dirty
-      // tick flushes the whole buffer, so nothing is lost meanwhile.
+    if (captureRows(found)) {
+      // Until the session and its stored entries load, adoptSession flushes
+      // these buffered captions even if the DOM never changes again.
       if (storageKey) store({ [storageKey]: entries })
       if (!TOP) {
         // mirror to this tab's top frame (badge + PiP live there)
@@ -379,8 +473,34 @@ let ccBusy = false
 // there, the user turned them off: stop re-enabling until they turn them on.
 let ccWasOn = false
 let ccUserOff = false
+let zoomOpenClicks = 0
+/** Attempts to open Zoom's participants pane before settling for initials. */
+const ZOOM_OPEN_TRIES = 5
 const TEAMS_MORE =
   '#callingButtons-showMoreBtn, [data-tid="more-button"], [data-tid="call-more-menu-trigger"]'
+function zoomCcButton() {
+  return document.querySelector('svg.SvgCaptions')?.closest('button')
+}
+function zoomOpenParticipants() {
+  if (document.querySelector('#participants-unified-list')) {
+    zoomOpenClicks = 0
+    return
+  }
+  if (zoomOpenClicks >= ZOOM_OPEN_TRIES) {
+    // Said once, then left alone until the pane opens (which resets the count):
+    // capture carries on with the caption's initials/avatar as the speaker.
+    if (zoomOpenClicks === ZOOM_OPEN_TRIES) {
+      console.warn(TAG, `Zoom participants pane did not open after ${ZOOM_OPEN_TRIES} clicks; speaker names fall back to initials/avatar.`)
+      zoomOpenClicks++
+    }
+    return
+  }
+  const button = zoomParticipantsButton()
+  if (/^open the participants list pane/i.test(button?.getAttribute('aria-label') || '')) {
+    button.click()
+    zoomOpenClicks++
+  }
+}
 function meetCcButton() {
   const icon = [...document.querySelectorAll('button i')].find((i) =>
     i.textContent.trim().startsWith('closed_caption'),
@@ -388,7 +508,7 @@ function meetCcButton() {
   return icon?.closest('button')
 }
 // still in the call = the toolbar control we would click is mounted
-const inCallToolbar = () => !!(TEAMS ? document.querySelector(TEAMS_MORE) : meetCcButton())
+const inCallToolbar = () => !!(ZOOM ? zoomCcButton() : TEAMS ? document.querySelector(TEAMS_MORE) : meetCcButton())
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const menuItem = (re) =>
   [
@@ -465,6 +585,7 @@ function pageMeetingTitle() {
     const shaped = parts.length >= 3 && parts[parts.length - 1] === 'Microsoft Teams'
     return shaped ? parts[parts.length - 2] : ''
   }
+  if (ZOOM) return ''
   const title = raw.match(/^Meet\s*[-–—]\s*(.+)$/)?.[1]?.trim() ?? ''
   return MEET_CODE.test(title) ? '' : title
 }
@@ -768,7 +889,7 @@ timers.push(
       ccClicks = 0
       ccWasOn = true
       ccUserOff = false // turned back on: capture resumes
-      if (!meetingId) initMeeting('tms-' + Date.now()) // Teams: in-call, CC on, no URL id
+      if (!meetingId) initMeeting((ZOOM ? 'zm-' : 'tms-') + Date.now())
       if (!announced && meetingId) {
         announced = true // in the call, CC live -> auto-open transcript window
         try {
@@ -781,11 +902,13 @@ timers.push(
         }
       }
       captureMeetingTitle()
-      void (TEAMS ? teamsAutoPrompt() : meetApplyCaptionLang())
+      if (ZOOM) zoomOpenParticipants()
+      if (!ZOOM) void (TEAMS ? teamsAutoPrompt() : meetApplyCaptionLang())
       return
     }
     if (ccWasOn && inCallToolbar()) ccUserOff = true
     if (ccUserOff) return // user turned captions off: leave them off
+    if (ZOOM) return // the sample only proves the on-state; never toggle blindly
     if (ccClicks >= 5) return // selector churned? stop before toggle-looping
     if (TEAMS) {
       void teamsEnableCc()
@@ -905,7 +1028,7 @@ async function togglePip() {
   </style>`,
   )
   doc.body.innerHTML =
-    `<div id="hd">${TEAMS ? 'Teams' : 'Meet'} CC — live` +
+    `<div id="hd">${ZOOM ? 'Zoom' : TEAMS ? 'Teams' : 'Meet'} CC — live` +
     '<span style="float:right;color:#8b95a9;font-weight:400;letter-spacing:0;text-transform:none">powered by suiflex</span>' +
     '</div><div id="list"></div>'
   pipList = doc.getElementById('list')

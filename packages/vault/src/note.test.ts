@@ -48,6 +48,13 @@ describe('note frontmatter', () => {
     expect(noteFromMarkdown(noteToMarkdown(ticket))).toEqual(ticket)
   })
 
+  it('round-trips the page icon and cover', () => {
+    const page: VaultNote = { ...NOTE, icon: '🚀', cover: '.assets/cover "a".png' }
+    expect(noteFromMarkdown(noteToMarkdown(page))).toEqual(page)
+    const image: VaultNote = { ...NOTE, icon: '.assets/icon.png' }
+    expect(noteFromMarkdown(noteToMarkdown(image))).toEqual(image)
+  })
+
   it('still reads a note written before the ticket fields existed', () => {
     const parsed = noteFromMarkdown(noteToMarkdown(NOTE))
     expect(parsed.status).toBeUndefined()

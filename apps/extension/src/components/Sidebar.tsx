@@ -11,23 +11,42 @@ import { listProjects, listSessions } from '../lib/db'
 import { activeSponsorLinks } from '../lib/sponsor'
 import { resolveTheme, watchSystemTheme, type ThemePref } from '../lib/theme'
 import { locale, t } from '@meetcc/shared/i18n'
-import { Button } from '@meetcc/ui'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { cn } from '@/lib/utils'
+import {
+  ArrowRightLeft,
+  Check,
+  Coffee,
+  Heart,
+  ListCheck,
+  Merge,
+  Monitor,
+  Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Search,
+  Settings,
+  Sparkles,
+  Sun,
+  Trash2,
+  type LucideIcon,
+} from 'lucide-react'
 
 const themeLabel = (p: ThemePref): string =>
   t('ext.sidebar.theme', {
     mode: p === 'system' ? t('pref.system') : p === 'light' ? t('pref.light') : t('pref.dark'),
   })
 
-const THEME_ICON: Record<ThemePref, string> = {
-  system: '◐',
-  light: '☀',
-  dark: '☾',
-}
-
 const NEXT: Record<ThemePref, ThemePref> = {
   system: 'light',
   light: 'dark',
   dark: 'system',
+}
+
+const SPONSOR_ICON: Record<string, LucideIcon> = {
+  github: Heart,
+  saweria: Coffee,
 }
 
 /** Cycles system → light → dark; persisted so the next open keeps the choice. */
@@ -60,11 +79,19 @@ function ThemeToggle() {
     })
   }, [pref])
 
+  const Icon = pref === 'system' ? Monitor : pref === 'light' ? Sun : Moon
+
   return (
-    <Button className='icon-btn'
-    onClick={() => setPref((p) => NEXT[p])}
-    aria-label={themeLabel(pref)}
-    title={themeLabel(pref)}>{THEME_ICON[pref]}</Button>
+    <Button
+      variant="ghost"
+      size="icon-xs"
+      className="icon-btn text-muted-foreground hover:text-foreground"
+      onClick={() => setPref((p) => NEXT[p])}
+      aria-label={themeLabel(pref)}
+      title={themeLabel(pref)}
+    >
+      <Icon className="size-4" />
+    </Button>
   )
 }
 
@@ -228,134 +255,210 @@ export function Sidebar({
     const r = records[m.id]
     if (!r) return null
     if (r.status === 'processing')
-      return <span className='ai-badge processing'>AI…</span>
-    if (r.status === 'error') return <span className='ai-badge error'>!</span>
-    return <span className='ai-badge done'>✓</span>
+      return (
+        <Badge
+          variant="outline"
+          className="ai-badge processing border-primary/40 bg-primary/10 text-primary text-[10px] px-1 py-0 gap-1 animate-pulse"
+        >
+          <Sparkles className="size-2.5" />
+          AI…
+        </Badge>
+      )
+    if (r.status === 'error')
+      return (
+        <Badge
+          variant="destructive"
+          className="ai-badge error size-4 p-0 rounded-full flex items-center justify-center text-[10px]"
+        >
+          !
+        </Badge>
+      )
+    return (
+      <Badge
+        variant="secondary"
+        className="ai-badge done size-4 p-0 rounded-full flex items-center justify-center border border-primary/40 text-primary bg-primary/10"
+      >
+        <Check className="size-2.5" />
+      </Badge>
+    )
   }
 
   const item = (m: Meeting) => {
     // named by the AI summary (or the user); falls back to the raw meeting id
     const label = titles[m.id] || displayMeetingId(m.id)
+    const isSelected = m.id === selectedId
     return (
-    <div key={m.id} className='meeting-row'>
-      {selecting && (
-        <input
-          className='meeting-select'
-          type='checkbox'
-          aria-label={t('ext.sidebar.selectMeeting', { label })}
-          checked={selectedMeetings.has(m.id)}
-          disabled={exporting || deleting || merging}
-          onChange={(event) => toggleMeeting(m.id, event.target.checked)}
-        />
-      )}
-      <Button className={`meeting ${m.id === selectedId ? 'selected' : ''}`}
-      title={m.id}
-      onClick={() => onSelect(m.id)}><span className={`status ${isLive(m, now) ? 'on' : ''}`} />
-      <span className='meeting-body'>
-        <span className='meeting-id'>{label}</span>
-        <span className='meeting-sub'>
-          {fmtDate(startedAt(m))} · {t('ext.sidebar.lines', { count: m.entries.length })}
-        </span>
-      </span>
-      {badge(m)}</Button>
-      <Button className='meeting-del'
-      aria-label={t('ext.sidebar.deleteMeeting', { label })}
-      title={t('ext.sidebar.deleteMeetingHint')}
-      onClick={() => onDelete(m.id)}>
-      🗑
-            </Button>
-    </div>
+      <div key={m.id} className="meeting-row group">
+        {selecting && (
+          <input
+            className="meeting-select"
+            type="checkbox"
+            aria-label={t('ext.sidebar.selectMeeting', { label })}
+            checked={selectedMeetings.has(m.id)}
+            disabled={exporting || deleting || merging}
+            onChange={(event) => toggleMeeting(m.id, event.target.checked)}
+          />
+        )}
+        <Button
+          variant="ghost"
+          className={cn('meeting', isSelected && 'selected')}
+          title={m.id}
+          onClick={() => onSelect(m.id)}
+        >
+          <span className={cn('status', isLive(m, now) && 'on')} />
+          <span className="meeting-body">
+            <span className="meeting-id truncate">{label}</span>
+            <span className="meeting-sub">
+              {fmtDate(startedAt(m))} · {t('ext.sidebar.lines', { count: m.entries.length })}
+            </span>
+          </span>
+          {badge(m)}
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          className="meeting-del text-muted-foreground/60 hover:text-destructive hover:bg-destructive/10"
+          aria-label={t('ext.sidebar.deleteMeeting', { label })}
+          title={t('ext.sidebar.deleteMeetingHint')}
+          onClick={() => onDelete(m.id)}
+        >
+          <Trash2 className="size-3.5" />
+        </Button>
+      </div>
     )
   }
 
   // collapsed: slim icon rail — every action stays reachable, zero clutter
   if (!open) {
     return (
-      <aside className='sidebar collapsed'>
-        <Button className='icon-btn'
-        onClick={() => setOpen(true)}
-        aria-label={t('ext.sidebar.expand')}
-        aria-expanded='false'
-        title={t('ext.sidebar.expand')}>
-        »
-                </Button>
-        <img className='brand-logo' src='icons/suiflex.svg' alt='Suiflex' />
+      <aside className="sidebar collapsed">
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          className="icon-btn"
+          onClick={() => setOpen(true)}
+          aria-label={t('ext.sidebar.expand')}
+          aria-expanded="false"
+          title={t('ext.sidebar.expand')}
+        >
+          <PanelLeftOpen className="size-4" />
+        </Button>
+        <img className="brand-logo" src="icons/suiflex.svg" alt="Suiflex" />
         {live.length > 0 && (
           <span
-            className='rail-live'
+            className="rail-live"
             title={t('ext.sidebar.liveCount', { count: live.length })}
           />
         )}
-        <span className='spacer' />
-        <Button className='icon-btn'
-        onClick={onSearch}
-        aria-label={t('ext.sidebar.searchAll')}
-        title={t('ext.sidebar.searchAllShortcut')}>
-        ⌕
-                </Button>
-        <Button className={`icon-btn ${activeView === 'knowledge' ? 'active' : ''}`}
-        onClick={onKnowledge}
-        aria-label={t('ext.sidebar.knowledge')}
-        title={t('ext.sidebar.knowledge')}>
-        ✦
-                </Button>
-        <Button className={`icon-btn ${activeView === 'decisions' ? 'active' : ''}`}
-        onClick={onDecisions}
-        aria-label={t('ext.sidebar.decisions')}
-        title={t('ext.sidebar.decisions')}>
-        ▤
-                </Button>
+        <span className="spacer" />
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          className="icon-btn"
+          onClick={onSearch}
+          aria-label={t('ext.sidebar.searchAll')}
+          title={t('ext.sidebar.searchAllShortcut')}
+        >
+          <Search className="size-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          className={cn('icon-btn', activeView === 'knowledge' && 'active')}
+          onClick={onKnowledge}
+          aria-label={t('ext.sidebar.knowledge')}
+          title={t('ext.sidebar.knowledge')}
+        >
+          <Sparkles className="size-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          className={cn('icon-btn', activeView === 'decisions' && 'active')}
+          onClick={onDecisions}
+          aria-label={t('ext.sidebar.decisions')}
+          title={t('ext.sidebar.decisions')}
+        >
+          <ListCheck className="size-4" />
+        </Button>
         <ThemeToggle />
-        <Button className={`icon-btn ${activeView === 'settings' ? 'active' : ''}`}
-        onClick={onSettings}
-        aria-label={t('ext.sidebar.settings')}
-        title={t('ext.sidebar.settings')}>
-        ⚙
-                </Button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          className={cn('icon-btn', activeView === 'settings' && 'active')}
+          onClick={onSettings}
+          aria-label={t('ext.sidebar.settings')}
+          title={t('ext.sidebar.settings')}
+        >
+          <Settings className="size-4" />
+        </Button>
       </aside>
     )
   }
 
   return (
-    <aside className='sidebar'>
-      <div className='sidebar-top'>
-        <div className='brand'>
-          <img className='brand-logo' src='icons/suiflex.svg' alt='Suiflex' />
-          <span className='brand-name'>Companion</span>
-          <Button className='icon-btn collapse-btn'
-          onClick={() => setOpen(false)}
-          aria-label={t('ext.sidebar.collapse')}
-          aria-expanded='true'
-          title={t('ext.sidebar.collapse')}>
-          «
-                    </Button>
+    <aside className="sidebar">
+      <div className="sidebar-top">
+        <div className="brand flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <img className="brand-logo" src="icons/suiflex.svg" alt="Suiflex" />
+            <span className="brand-name">Companion</span>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="icon-btn collapse-btn"
+            onClick={() => setOpen(false)}
+            aria-label={t('ext.sidebar.collapse')}
+            aria-expanded="true"
+            title={t('ext.sidebar.collapse')}
+          >
+            <PanelLeftClose className="size-4" />
+          </Button>
         </div>
 
-        <Button className='sidebar-search-btn'
-        onClick={onSearch}
-        aria-label={t('ext.sidebar.searchAll')}
-        title={t('ext.sidebar.searchAllShortcut')}><span className='sidebar-search-icon'>⌕</span>
-        <span className='sidebar-search-text'>{t('ext.sidebar.searchAll')}</span>
-        <kbd className='sidebar-search-kbd'>⌘K</kbd></Button>
+        <Button
+          variant="outline"
+          className="sidebar-search-btn w-full justify-start h-8 px-2.5 text-muted-foreground hover:text-foreground border-border/60 bg-muted/40"
+          onClick={onSearch}
+          aria-label={t('ext.sidebar.searchAll')}
+          title={t('ext.sidebar.searchAllShortcut')}
+        >
+          <Search className="sidebar-search-icon size-3.5 mr-2 shrink-0 text-muted-foreground" />
+          <span className="sidebar-search-text text-xs flex-1 text-left">{t('ext.sidebar.searchAll')}</span>
+          <kbd className="sidebar-search-kbd text-[10px] font-mono text-muted-foreground/80 border border-border/60 rounded px-1 py-0.5 bg-background/50">⌘K</kbd>
+        </Button>
 
-        <nav className='sidebar-nav' aria-label={t('ext.sidebar.knowledge')}>
-          <Button className={`sidebar-nav-btn ${activeView === 'knowledge' ? 'active' : ''}`}
-          onClick={onKnowledge}
-          title={t('ext.sidebar.knowledge')}><span className='sidebar-nav-icon'>✦</span>
-          <span className='sidebar-nav-label'>{t('ext.sidebar.knowledge')}</span></Button>
-          <Button className={`sidebar-nav-btn ${activeView === 'decisions' ? 'active' : ''}`}
-          onClick={onDecisions}
-          title={t('ext.sidebar.decisions')}><span className='sidebar-nav-icon'>▤</span>
-          <span className='sidebar-nav-label'>{t('ext.sidebar.decisions')}</span></Button>
+        <nav className="sidebar-nav" aria-label={t('ext.sidebar.knowledge')}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={cn('sidebar-nav-btn w-full justify-start h-7 text-xs font-medium', activeView === 'knowledge' && 'active')}
+            onClick={onKnowledge}
+            title={t('ext.sidebar.knowledge')}
+          >
+            <Sparkles className="sidebar-nav-icon size-3.5 mr-2 text-primary shrink-0" />
+            <span className="sidebar-nav-label truncate">{t('ext.sidebar.knowledge')}</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={cn('sidebar-nav-btn w-full justify-start h-7 text-xs font-medium', activeView === 'decisions' && 'active')}
+            onClick={onDecisions}
+            title={t('ext.sidebar.decisions')}
+          >
+            <ListCheck className="sidebar-nav-icon size-3.5 mr-2 text-amber shrink-0" />
+            <span className="sidebar-nav-label truncate">{t('ext.sidebar.decisions')}</span>
+          </Button>
         </nav>
       </div>
 
-      <div className='sidebar-scroll'>
+      <div className="sidebar-scroll">
         {projects.length > 0 && (
-          <label className='sidebar-filter'>
-            <span className='section-label'>{t('ext.sidebar.project')}</span>
+          <label className="sidebar-filter">
+            <span className="section-label">{t('ext.sidebar.project')}</span>
             <select value={filter} onChange={(e) => setFilter(e.target.value)} aria-label={t('ext.sidebar.projectFilter')}>
-              <option value=''>{t('ext.sidebar.allMeetings')}</option>
+              <option value="">{t('ext.sidebar.allMeetings')}</option>
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
@@ -365,21 +468,23 @@ export function Sidebar({
           </label>
         )}
 
-        <div className='meeting-bulk'>
-          <div className='meeting-bulk-row'>
+        <div className="meeting-bulk">
+          <div className="meeting-bulk-row">
             <Button
-              type='button'
-              variant={selecting ? 'ghost' : 'default'}
+              type="button"
+              size="xs"
+              variant={selecting ? 'ghost' : 'outline'}
               disabled={loading || meetings.length === 0 || exporting || deleting || merging}
               aria-pressed={selecting}
-              onClick={() => selecting ? cancelSelection() : setSelecting(true)}
+              onClick={() => (selecting ? cancelSelection() : setSelecting(true))}
             >
               {selecting ? t('ext.sidebar.cancelMeetingSelection') : t('ext.sidebar.selectMeetings')}
             </Button>
             {selecting && (
               <Button
-                type='button'
-                variant='ghost'
+                type="button"
+                size="xs"
+                variant="ghost"
                 disabled={shown.length === 0 || exporting || deleting || merging}
                 onClick={toggleVisibleMeetings}
               >
@@ -389,26 +494,30 @@ export function Sidebar({
           </div>
           {selecting && (
             <>
-              <div className='meeting-bulk-row'>
-                <span className='meeting-selection-count'>
+              <div className="meeting-bulk-row">
+                <span className="meeting-selection-count">
                   {t('ext.sidebar.selectedMeetingCount', { count: selectedMeetings.size })}
                 </span>
                 <Button
-                  type='button'
-                  variant='primary'
+                  type="button"
+                  size="xs"
+                  variant="default"
                   disabled={!selectedMeetings.size || exporting || deleting || merging}
                   onClick={() => void transferSelected()}
                 >
+                  <ArrowRightLeft className="size-3 mr-1" />
                   {exporting
                     ? t('ext.sidebar.sendingMeetingsToDesktop')
                     : t('ext.sidebar.sendMeetingsToDesktop', { count: selectedMeetings.size })}
                 </Button>
                 <Button
-                  type='button'
-                  variant='danger'
+                  type="button"
+                  size="xs"
+                  variant="destructive"
                   disabled={!selectedMeetings.size || exporting || deleting || merging}
                   onClick={() => void deleteSelected()}
                 >
+                  <Trash2 className="size-3 mr-1" />
                   {deleting
                     ? t('ext.sidebar.deletingMeetings')
                     : t('ext.sidebar.deleteSelectedMeetings', { count: selectedMeetings.size })}
@@ -416,9 +525,10 @@ export function Sidebar({
               </div>
               {selectedMeetings.size > 1 && (
                 <>
-                  <label className='meeting-merge-target'>
-                    <span>{t('ext.sidebar.mergeTarget')}</span>
+                  <label className="meeting-merge-target flex flex-col gap-1 text-xs text-muted-foreground mt-2">
+                    <span className="font-medium text-foreground">{t('ext.sidebar.mergeTarget')}</span>
                     <select
+                      className="h-7 rounded-md border border-border/60 bg-muted/30 px-2 text-xs text-foreground outline-none focus:border-ring"
                       value={mergeTargetId}
                       disabled={exporting || deleting || merging}
                       onChange={(event) => setMergeTarget(event.target.value)}
@@ -431,14 +541,17 @@ export function Sidebar({
                     </select>
                   </label>
                   {mergeSourcesLive && (
-                    <p className='meeting-merge-warning'>{t('ext.sidebar.liveSourceMergeBlocked')}</p>
+                    <p className="meeting-merge-warning text-[11px] text-warning mt-1">{t('ext.sidebar.liveSourceMergeBlocked')}</p>
                   )}
                   <Button
-                    type='button'
-                    variant='primary'
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    className="mt-2 w-full gap-1 text-xs"
                     disabled={selectedForMerge.length < 2 || mergeSourcesLive || exporting || deleting || merging}
                     onClick={() => void mergeSelected()}
                   >
+                    <Merge className="size-3" />
                     {merging
                       ? t('ext.sidebar.mergingMeetings')
                       : t('ext.sidebar.mergeSelectedMeetings', { count: selectedForMerge.length })}
@@ -449,56 +562,64 @@ export function Sidebar({
           )}
         </div>
         {loading ? (
-          <div aria-hidden='true'>
+          <div aria-hidden="true">
             {[0, 1, 2].map((i) => (
-              <div key={i} className='skeleton skeleton-row' />
+              <div key={i} className="skeleton skeleton-row" />
             ))}
           </div>
         ) : (
           <>
             {live.length > 0 && (
-              <section className='meeting-section'>
-                <h2 className='section-label'>{t('ext.sidebar.live')}</h2>
+              <section className="meeting-section">
+                <h2 className="section-label">{t('ext.sidebar.live')}</h2>
                 {live.map(item)}
               </section>
             )}
-            <section className='meeting-section'>
-              <h2 className='section-label'>{t('ext.sidebar.history')}</h2>
+            <section className="meeting-section">
+              <h2 className="section-label">{t('ext.sidebar.history')}</h2>
               {past.length ? (
                 past.map(item)
               ) : (
-                <p className='section-empty'>{t('ext.sidebar.historyEmpty')}</p>
+                <p className="section-empty">{t('ext.sidebar.historyEmpty')}</p>
               )}
             </section>
           </>
         )}
       </div>
 
-      <div className='sidebar-bottom'>
-        <div className='sidebar-foot'>
+      <div className="sidebar-bottom">
+        <div className="sidebar-foot flex items-center gap-1">
           <ThemeToggle />
-          <Button className={`icon-btn ${activeView === 'settings' ? 'active' : ''}`}
-          onClick={onSettings}
-          aria-label={t('ext.sidebar.settings')}
-          title={t('ext.sidebar.settings')}>
-          ⚙
-                    </Button>
-          <span className='spacer' />
-          {activeSponsorLinks().map((link) => (
-            <a
-              key={link.id}
-              className='icon-btn'
-              href={link.url}
-              target='_blank'
-              rel='noreferrer noopener'
-              aria-label={`${t('sponsor.title')} · ${t(link.label)}`}
-              title={`${t('sponsor.title')} · ${t(link.label)}`}>
-              {link.icon}
-            </a>
-          ))}
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className={cn('icon-btn', activeView === 'settings' && 'active')}
+            onClick={onSettings}
+            aria-label={t('ext.sidebar.settings')}
+            title={t('ext.sidebar.settings')}
+          >
+            <Settings className="size-4" />
+          </Button>
+          <span className="spacer flex-1" />
+          {activeSponsorLinks().map((link) => {
+            const Icon = SPONSOR_ICON[link.id]
+            return (
+              <a
+                key={link.id}
+                className="icon-btn flex items-center justify-center size-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                href={link.url}
+                target="_blank"
+                rel="noreferrer noopener"
+                aria-label={`${t('sponsor.title')} · ${t(link.label)}`}
+                title={`${t('sponsor.title')} · ${t(link.label)}`}
+              >
+                {Icon ? <Icon className="size-3.5" /> : link.icon}
+              </a>
+            )
+          })}
         </div>
-        <p className='sidebar-credit'>
-          <img className='credit-logo' src='icons/suiflex.svg' alt='' />
+        <p className="sidebar-credit">
+          <img className="credit-logo" src="icons/suiflex.svg" alt="" />
           powered by suiflex
         </p>
       </div>

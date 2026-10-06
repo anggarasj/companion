@@ -21,7 +21,18 @@ import {
 } from '@meetcc/shared'
 import { lazyImport } from '../lib/lazy'
 import { db } from '../lib/db'
-import { Button, RadioGroup, useToast } from '@meetcc/ui'
+import { RadioGroup, useToast } from '@meetcc/ui'
+import { Button } from '@/components/ui/button'
+import {
+  ChevronDown,
+  Download,
+  FileCode,
+  FileDown,
+  FileText,
+  RefreshCw,
+  Send,
+  Sparkles,
+} from 'lucide-react'
 import { TimelineScopeList } from './TimelineScopeList'
 
 const TYPES: DocType[] = ['notulen', 'brd', 'prd', 'recap']
@@ -396,17 +407,20 @@ export function DocumentOutputs({
           />
         </details>
       )}
-      <div className="doc-output-actions">
+      <div className="doc-output-actions flex flex-wrap items-center justify-between gap-2 px-4 py-2">
         <div className="doc-export-control" ref={exportMenuRef}>
           <Button
             type="button"
+            variant="outline"
+            size="sm"
             aria-haspopup="menu"
             aria-expanded={exportMenuOpen}
             aria-controls={`document-export-menu-${meeting.id}`}
             disabled={anyRunning || desktopBusy || pdfBusy}
             onClick={() => setExportMenuOpen((open) => !open)}
           >
-            {t('ext.docs.exportResult')} <span aria-hidden="true">▾</span>
+            <Download className="size-3.5 mr-1.5" />
+            {t('ext.docs.exportResult')} <ChevronDown className="size-3 ml-1" />
           </Button>
           {exportMenuOpen && (
             <div
@@ -424,36 +438,48 @@ export function DocumentOutputs({
                   <strong className="doc-export-group-title">{t('ext.docs.exportSummaryGroup')}</strong>
                   <Button
                     type="button"
-                    className="doc-export-item"
+                    variant="ghost"
+                    size="xs"
+                    className="doc-export-item w-full justify-start text-xs font-normal"
                     role="menuitem"
                     onClick={() => void exportSummary('markdown')}
                   >
+                    <FileText className="size-3.5 mr-2 text-muted-foreground" />
                     {t('ext.docs.markdownExport')}
                   </Button>
                   <Button
                     type="button"
-                    className="doc-export-item"
+                    variant="ghost"
+                    size="xs"
+                    className="doc-export-item w-full justify-start text-xs font-normal"
                     role="menuitem"
                     onClick={() => void exportSummary('obsidian')}
                   >
+                    <FileCode className="size-3.5 mr-2 text-purple-400" />
                     {t('ext.docs.obsidianExport')}
                   </Button>
                   <Button
                     type="button"
-                    className="doc-export-item"
+                    variant="ghost"
+                    size="xs"
+                    className="doc-export-item w-full justify-start text-xs font-normal"
                     role="menuitem"
                     disabled={pdfBusy}
                     onClick={() => void exportSummary('pdf')}
                   >
+                    <FileDown className="size-3.5 mr-2 text-red-400" />
                     {t('ext.docs.pdfExport')}
                   </Button>
                   <Button
                     type="button"
-                    className="doc-export-item"
+                    variant="ghost"
+                    size="xs"
+                    className="doc-export-item w-full justify-start text-xs font-normal"
                     role="menuitem"
                     disabled={desktopBusy}
                     onClick={() => void exportSummary('desktop')}
                   >
+                    <Send className="size-3.5 mr-2 text-primary" />
                     {t('ext.docs.exportSummaryDesktop')}
                   </Button>
                 </div>
@@ -471,36 +497,48 @@ export function DocumentOutputs({
                 </p>
                 <Button
                   type="button"
-                  className="doc-export-item"
+                  variant="ghost"
+                  size="xs"
+                  className="doc-export-item w-full justify-start text-xs font-normal"
                   role="menuitem"
                   onClick={() => void exportResult('markdown')}
                 >
+                  <FileText className="size-3.5 mr-2 text-muted-foreground" />
                   {t('ext.docs.markdownExport')}
                 </Button>
                 <Button
                   type="button"
-                  className="doc-export-item"
+                  variant="ghost"
+                  size="xs"
+                  className="doc-export-item w-full justify-start text-xs font-normal"
                   role="menuitem"
                   onClick={() => void exportResult('obsidian')}
                 >
+                  <FileCode className="size-3.5 mr-2 text-purple-400" />
                   {t('ext.docs.obsidianExport')}
                 </Button>
                 <Button
                   type="button"
-                  className="doc-export-item"
+                  variant="ghost"
+                  size="xs"
+                  className="doc-export-item w-full justify-start text-xs font-normal"
                   role="menuitem"
                   disabled={pdfBusy}
                   onClick={() => void exportResult('pdf')}
                 >
+                  <FileDown className="size-3.5 mr-2 text-red-400" />
                   {t('ext.docs.pdfExport')}
                 </Button>
                 <Button
                   type="button"
-                  className="doc-export-item"
+                  variant="ghost"
+                  size="xs"
+                  className="doc-export-item w-full justify-start text-xs font-normal"
                   role="menuitem"
                   disabled={desktopBusy}
                   onClick={() => void exportResult('desktop')}
                 >
+                  <Send className="size-3.5 mr-2 text-primary" />
                   {current
                     ? t('ext.docs.desktopExportDocument', { label: meta.label })
                     : t('ext.docs.desktopExportTranscript')}
@@ -509,21 +547,26 @@ export function DocumentOutputs({
             </div>
           )}
         </div>
-        <div className="doc-primary-actions">
+        <div className="doc-primary-actions flex items-center justify-end gap-2 flex-wrap min-w-0">
           {analysis && (
             <Button
               type="button"
-              variant="ghost"
+              variant="outline"
+              size="sm"
+              className="truncate max-w-full"
               title={t('ext.summary.reanalyzeHint')}
               onClick={() => void regenerateSummary()}
               disabled={summaryBusy}
             >
-              {summaryBusy ? t('ext.summary.processing') : t('ext.summary.regenerate')}
+              <RefreshCw className={`size-3.5 mr-1.5 shrink-0 ${summaryBusy ? 'animate-spin' : ''}`} />
+              <span className="truncate">{summaryBusy ? t('ext.summary.processing') : t('ext.summary.regenerate')}</span>
             </Button>
           )}
           <Button
-            variant="primary"
+            variant="default"
+            size="sm"
             type="button"
+            className="truncate max-w-full"
             onClick={() => void generate(type)}
             title={t('ext.docs.generateDocumentHint', { label: meta.label })}
             disabled={
@@ -533,13 +576,15 @@ export function DocumentOutputs({
               includedEntryCount === 0
             }
           >
-            {running
-              ? t('ext.docs.generatingPercent', { label: meta.label, pct })
-              : t('ext.docs.generateDocument', { label: meta.label })}
+            <Sparkles className="size-3.5 mr-1.5 shrink-0" />
+            <span className="truncate">
+              {running
+                ? t('ext.docs.generatingPercent', { label: meta.label, pct })
+                : t('ext.docs.generateDocument', { label: meta.label })}
+            </span>
           </Button>
         </div>
       </div>
-
       {running ? (
         <div className="summary-body">
           <div

@@ -204,6 +204,183 @@ fn walk_md(root: &Path, dir: &Path, out: &mut Vec<String>) -> Result<(), String>
     Ok(())
 }
 
+/// Image types a note may use as its icon or cover.
+const IMAGE_EXTS: [&str; 6] = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
+/// Video and audio a note plays inline.
+const MEDIA_EXTS: [&str; 8] = ["mp4", "mov", "m4v", "webm", "mp3", "m4a", "wav", "ogg"];
+/// An attachment travels through IPC in one piece, so it has a ceiling.
+const MAX_ASSET_BYTES: u64 = 200 * 1024 * 1024;
+/// Where pasted, dropped and picked attachments live; a dot folder, so the
+/// sidebar tree leaves it out.
+const ASSETS: &str = ".assets/";
+
+fn ext_of(path: &Path) -> Option<String> {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+}
+
+fn is_image(path: &Path) -> bool {
+    ext_of(path).is_some_and(|e| IMAGE_EXTS.contains(&e.as_str()))
+}
+
+fn is_media(path: &Path) -> bool {
+    ext_of(path).is_some_and(|e| MEDIA_EXTS.contains(&e.as_str()))
+}
+
+/// An attachment keeps its own type and is never a note: a `.md` written
+/// here would join the vault as a note nobody wrote.
+fn attachment_type_ok(dest: &Path) -> bool {
+    ext_of(dest).is_some_and(|e| e != "md")
+}
+
+/// Copy a file the user picked in the file dialog into the vault, so a note's
+/// cover, icon or attachment travels with the vault instead of pointing at a
+/// file somewhere else on the disk. Bytes only: the name comes from the frontend.
+fn import_asset(root: &Path, src: &Path, rel: &str) -> Result<(), String> {
+    let dest = resolve(root, rel)?;
+    if !attachment_type_ok(&dest) || ext_of(src) != ext_of(&dest) {
+        return Err("an attachment keeps its own type and is never a note".into());
+    }
+    let meta = fs::metadata(src).map_err(|e| e.to_string())?;
+    if !meta.is_file() || meta.len() > MAX_ASSET_BYTES {
+        return Err("not a file, or larger than 200 MB".into());
+    }
+    if dest.exists() {
+        return Err(format!("already exists: {rel}"));
+    }
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::copy(src, &dest).map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Write a pasted or dropped attachment into `.assets/`. Such a file has no
+/// path the dialog could hand over — a screenshot on the clipboard is only
+/// bytes — so the bytes come over IPC. Never over an existing file.
+fn write_asset(root: &Path, rel: &str, bytes: &[u8]) -> Result<(), String> {
+    if !rel.starts_with(ASSETS) {
+        return Err(format!("attachments go in {ASSETS}"));
+    }
+    let dest = resolve(root, rel)?;
+    if !attachment_type_ok(&dest) {
+        return Err("an attachment keeps its own type and is never a note".into());
+    }
+    if bytes.len() as u64 > MAX_ASSET_BYTES {
+        return Err("larger than 200 MB".into());
+    }
+    if dest.exists() {
+        return Err(format!("already exists: {rel}"));
+    }
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let tmp = dest.with_extension(format!("{}.tmp", std::process::id()));
+    fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, &dest).map_err(|e| e.to_string())
+}
+
+/// The body is the file's raw bytes, not a JSON array of numbers — a video
+/// encoded that way would be several times its own size. The vault path rides
+/// in the `x-vault-rel` header, ASCII because the frontend builds it that way.
+#[tauri::command]
+pub fn write_vault_bytes(
+    state: State<'_, VaultState>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<(), String> {
+    let rel = request
+        .headers()
+        .get("x-vault-rel")
+        .and_then(|v| v.to_str().ok())
+        .ok_or("missing x-vault-rel header")?;
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected raw bytes".into());
+    };
+    write_asset(&root(&state), rel, bytes)
+}
+
+#[tauri::command]
+pub fn import_vault_asset(
+    state: State<'_, VaultState>,
+    src: String,
+    rel: String,
+) -> Result<(), String> {
+    import_asset(&root(&state), Path::new(&src), &rel)
+}
+
+fn is_viewable(path: &Path) -> bool {
+    is_image(path) || is_media(path) || ext_of(path).is_some_and(|e| e == "pdf")
+}
+
+/// An image, PDF, video or audio file inside the vault, as raw bytes for the WebView to show.
+/// Nothing else: the WebView reads text through `read_vault_file`.
+#[tauri::command]
+pub fn read_vault_bytes(
+    state: State<'_, VaultState>,
+    rel: String,
+) -> Result<tauri::ipc::Response, String> {
+    let path = abs(&state, &rel)?;
+    if !is_viewable(&path) {
+        return Err("not an image, PDF, video or audio file".into());
+    }
+    fs::read(path)
+        .map(tauri::ipc::Response::new)
+        .map_err(|e| e.to_string())
+}
+
+/// Every file that is not a note, so the tree can show a vault as it is on
+/// disk. Dot entries (.obsidian, .assets, .DS_Store …) are tool state and left out.
+#[tauri::command]
+pub fn list_vault_files(state: State<'_, VaultState>) -> Result<Vec<String>, String> {
+    let root = root(&state);
+    let mut out = Vec::new();
+    walk_other(&root, &root, &mut out)?;
+    out.sort();
+    Ok(out)
+}
+
+fn walk_other(root: &Path, dir: &Path, out: &mut Vec<String>) -> Result<(), String> {
+    for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
+        if path.is_dir() {
+            walk_other(root, &path, out)?;
+        } else if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            let rel = path.strip_prefix(root).map_err(|e| e.to_string())?;
+            out.push(rel.to_string_lossy().into_owned());
+        }
+    }
+    Ok(())
+}
+
+/// Show a vault file in Finder / Explorer / the file manager. Reveal, never
+/// run: a vault can be a synced folder, and launching whatever file sits in
+/// it would make "open" mean "execute".
+#[tauri::command]
+pub fn reveal_vault_file(state: State<'_, VaultState>, rel: String) -> Result<(), String> {
+    let path = abs(&state, &rel)?;
+    if !path.exists() {
+        return Err(format!("not found: {rel}"));
+    }
+    let mut cmd = if cfg!(target_os = "macos") {
+        let mut c = std::process::Command::new("open");
+        c.arg("-R").arg(&path);
+        c
+    } else if cfg!(target_os = "windows") {
+        let mut c = std::process::Command::new("explorer");
+        c.arg(format!("/select,{}", path.display()));
+        c
+    } else {
+        let mut c = std::process::Command::new("xdg-open");
+        c.arg(path.parent().unwrap_or(&path));
+        c
+    };
+    cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn read_vault_file(state: State<'_, VaultState>, rel: String) -> Result<String, String> {
     fs::read_to_string(abs(&state, &rel)?).map_err(|e| e.to_string())
@@ -482,28 +659,158 @@ fn walk_dirs(root: &Path, dir: &Path, out: &mut Vec<String>) -> Result<(), Strin
 
 #[tauri::command]
 pub fn trash_vault_file(state: State<'_, VaultState>, rel: String) -> Result<(), String> {
-    let from = abs(&state, &rel)?;
+    trash_file(&root(&state), &rel)
+}
+
+fn trash_file(root: &Path, rel: &str) -> Result<(), String> {
+    let from = resolve(root, rel)?;
     let name = from
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("note.md");
-    let trash_dir = root(&state).join(TRASH);
+    let trash_dir = root.join(TRASH);
     fs::create_dir_all(&trash_dir).map_err(|e| e.to_string())?;
     // Notes from different days share a basename; landing on one already in the
     // trash would destroy it, which is what the trash exists to prevent.
     let mut dest = trash_dir.join(name);
     if fs::symlink_metadata(&dest).is_ok() {
-        let stem = name.strip_suffix(".md").unwrap_or(name);
-        dest = unique_timestamped_path(&trash_dir, stem, ".md")?;
+        // Any file can be trashed now, not only notes: keep its own extension.
+        let (stem, ext) = match name.rsplit_once('.') {
+            Some((stem, ext)) if !stem.is_empty() => (stem, format!(".{ext}")),
+            _ => (name, String::new()),
+        };
+        dest = unique_timestamped_path(&trash_dir, stem, &ext)?;
     }
     fs::rename(&from, dest).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// A header the frontend sent through `encodeURIComponent`: a note title can be
+/// any language, and a header value is ASCII.
+fn header_text(request: &tauri::ipc::Request<'_>, key: &str) -> Result<String, String> {
+    let raw = request
+        .headers()
+        .get(key)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| format!("missing {key} header"))?;
+    decode_header(raw).ok_or_else(|| format!("{key} is not UTF-8"))
+}
+
+fn decode_header(raw: &str) -> Option<String> {
+    percent_encoding::percent_decode_str(raw)
+        .decode_utf8()
+        .ok()
+        .map(|s| s.into_owned())
+}
+
+/// Save an export wherever the user points the native save dialog, which opens
+/// in `dir` — the vault folder the note lives in. The WebView never names the
+/// target — the dialog does — so this cannot be steered at an arbitrary file.
+/// Async because the dialog blocks, which must not happen on the main thread.
+/// `None` when the dialog was cancelled.
+///
+/// The bytes are the raw IPC body, not a JSON array of numbers: a long PDF
+/// export encoded that way was several times its own size in memory. The file
+/// name and folder ride in `x-export-name` / `x-export-dir`.
+#[tauri::command]
+pub async fn export_file(
+    app: tauri::AppHandle,
+    state: State<'_, VaultState>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected raw bytes".into());
+    };
+    let name = header_text(&request, "x-export-name")?;
+    let dir = header_text(&request, "x-export-dir")?;
+    let start = abs(&state, &dir)?;
+    let Some(picked) = app
+        .dialog()
+        .file()
+        .set_directory(start)
+        .set_file_name(&name)
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let path = picked.into_path().map_err(|e| e.to_string())?;
+    fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    Ok(Some(path.to_string_lossy().into_owned()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::env;
+
+    #[test]
+    fn export_headers_carry_a_title_in_any_language() {
+        // encodeURIComponent("Rapat Évaluasi 🚀.pdf") and ("Proyek/Ü")
+        assert_eq!(
+            decode_header("Rapat%20%C3%89valuasi%20%F0%9F%9A%80.pdf").as_deref(),
+            Some("Rapat Évaluasi 🚀.pdf")
+        );
+        assert_eq!(
+            decode_header("Proyek%2F%C3%9C").as_deref(),
+            Some("Proyek/Ü")
+        );
+        assert_eq!(decode_header("plain.md").as_deref(), Some("plain.md"));
+        // Not UTF-8 once decoded: refused, not mangled.
+        assert_eq!(decode_header("%FF%FE"), None);
+    }
+
+    #[test]
+    fn write_asset_puts_bytes_in_assets_and_refuses_everything_else() {
+        let root = tmp("write-asset");
+        write_asset(&root, ".assets/clip-1.mp4", b"video").unwrap();
+        assert_eq!(fs::read(root.join(".assets/clip-1.mp4")).unwrap(), b"video");
+        // Never over an existing file, never a note, never outside .assets.
+        assert!(write_asset(&root, ".assets/clip-1.mp4", b"again").is_err());
+        assert_eq!(fs::read(root.join(".assets/clip-1.mp4")).unwrap(), b"video");
+        assert!(write_asset(&root, ".assets/sneaky.md", b"# note").is_err());
+        assert!(write_asset(&root, ".assets/noext", b"x").is_err());
+        assert!(write_asset(&root, "Projects/a.png", b"x").is_err());
+        assert!(write_asset(&root, ".assets/../../outside.png", b"x").is_err());
+    }
+
+    #[test]
+    fn import_asset_takes_any_attachment_of_the_same_type() {
+        let root = tmp("import-any");
+        let outside = tmp("import-any-src");
+        fs::write(outside.join("talk.mov"), b"mov").unwrap();
+        fs::write(outside.join("brief.pdf"), b"pdf").unwrap();
+        import_asset(&root, &outside.join("talk.mov"), ".assets/talk-1.mov").unwrap();
+        import_asset(&root, &outside.join("brief.pdf"), ".assets/brief-1.pdf").unwrap();
+        assert_eq!(fs::read(root.join(".assets/talk-1.mov")).unwrap(), b"mov");
+        // Renaming the type on the way in is refused.
+        assert!(import_asset(&root, &outside.join("talk.mov"), ".assets/talk-2.png").is_err());
+    }
+
+    #[test]
+    fn trash_file_keeps_the_extension_of_a_non_note_on_collision() {
+        let root = tmp("trash-file-ext");
+        fs::create_dir_all(root.join("a")).unwrap();
+        fs::create_dir_all(root.join("b")).unwrap();
+        fs::write(root.join("a/Board.excalidraw"), "one").unwrap();
+        fs::write(root.join("b/Board.excalidraw"), "two").unwrap();
+        trash_file(&root, "a/Board.excalidraw").unwrap();
+        trash_file(&root, "b/Board.excalidraw").unwrap();
+        let mut names: Vec<String> = fs::read_dir(root.join(TRASH))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(names.len(), 2);
+        assert_eq!(names[1], "Board.excalidraw");
+        assert!(names[0].starts_with("Board-"), "{names:?}");
+        assert!(
+            names.iter().all(|n| n.ends_with(".excalidraw")),
+            "{names:?}"
+        );
+        assert!(!root.join("a/Board.excalidraw").exists());
+        assert!(trash_file(&root, "../outside.md").is_err());
+    }
 
     fn tmp(name: &str) -> PathBuf {
         let dir = env::temp_dir().join(format!("companion-vault-test-{name}"));
@@ -643,6 +950,51 @@ mod tests {
         let absolute = resolve(&root, "/etc/passwd").unwrap();
         assert!(absolute.starts_with(&root), "escaped: {absolute:?}");
         assert_eq!(absolute, root.join("etc/passwd"));
+    }
+
+    #[test]
+    fn lists_files_that_are_not_notes_and_skips_dot_entries() {
+        let root = tmp("other-files");
+        fs::create_dir_all(root.join("docs/.obsidian")).unwrap();
+        fs::create_dir_all(root.join(".assets")).unwrap();
+        for f in [
+            "docs/spec.pdf",
+            "docs/note.md",
+            "docs/sheet.xlsx",
+            "docs/.DS_Store",
+            "docs/.obsidian/app.json",
+            ".assets/c.png",
+        ] {
+            fs::write(root.join(f), b"x").unwrap();
+        }
+        let mut out = Vec::new();
+        walk_other(&root, &root, &mut out).unwrap();
+        out.sort();
+        assert_eq!(
+            out,
+            vec!["docs/sheet.xlsx".to_string(), "docs/spec.pdf".to_string()]
+        );
+        assert!(is_viewable(Path::new("a/B.PDF")));
+        assert!(!is_viewable(Path::new("a/b.xlsx")));
+    }
+
+    #[test]
+    fn import_copies_an_image_and_refuses_everything_else() {
+        let root = tmp("import");
+        let outside = tmp("import-src");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("cover.png"), b"png").unwrap();
+        fs::write(outside.join("notes.txt"), b"txt").unwrap();
+
+        import_asset(&root, &outside.join("cover.png"), ".assets/c.png").unwrap();
+        assert_eq!(fs::read(root.join(".assets/c.png")).unwrap(), b"png");
+
+        // Not an image, on either side.
+        assert!(import_asset(&root, &outside.join("notes.txt"), ".assets/n.png").is_err());
+        assert!(import_asset(&root, &outside.join("cover.png"), ".assets/c.md").is_err());
+        // Out of the vault, or over a file that is already there.
+        assert!(import_asset(&root, &outside.join("cover.png"), "../c.png").is_err());
+        assert!(import_asset(&root, &outside.join("cover.png"), ".assets/c.png").is_err());
     }
 
     #[test]

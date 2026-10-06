@@ -23,6 +23,7 @@
   - changed-files:
       - any-glob-to-any-file:
           - "apps/extension/public/content.js"
+          - "apps/extension/src/content.*.test.ts"
 
 "area: desktop":
   - changed-files:
@@ -48,8 +49,13 @@
   - changed-files:
       - any-glob-to-any-file:
           - "apps/desktop/native-host.ts"
-          - "apps/extension/src/lib/bridgeBatch.ts"
+          - "apps/desktop/src/spool.ts"
+          - "apps/desktop/src/spool.test.ts"
+          - "apps/desktop/src-tauri/src/host.rs"
+          - "apps/extension/src/lib/bridge*.ts"
           - "packages/vault/src/bridge.ts"
+          - "packages/vault/src/bridge.test.ts"
+          - "scripts/smoke-host-rs.mjs"
 
 "area: ai":
   - changed-files:
@@ -90,6 +96,8 @@
   - changed-files:
       - any-glob-to-any-file:
           - ".github/**"
+          - "Makefile"
+          - "scripts/danger_desktop.sh"
 
 "area: docs":
   - changed-files:
@@ -109,12 +117,20 @@
   - changed-files:
       - any-glob-to-any-file:
           - "scripts/companion.mjs"
+          - "scripts/companion.test.mjs"
           - "scripts/install.sh"
           - "scripts/install.ps1"
+          - "scripts/installer.test.mjs"
+          - "scripts/nativeHost.mjs"
+          - "scripts/nativeHost.test.mjs"
           - "scripts/pack.mjs"
+          - "scripts/pack-source.mjs"
           - "scripts/zip.mjs"
+          - "scripts/zip.test.mjs"
           - "scripts/unzip.mjs"
+          - "scripts/unzip.test.mjs"
           - "scripts/picker.mjs"
+          - "scripts/picker.test.mjs"
           - "apps/desktop/scripts/install-native-host.sh"
           - "apps/desktop/scripts/install-native-host.ps1"
 
@@ -129,3 +145,4 @@
           - "apps/desktop/package.json"
           - "apps/desktop/src-tauri/tauri.conf.json"
           - "apps/desktop/src-tauri/Cargo.toml"
+          - "apps/desktop/src-tauri/Cargo.lock"

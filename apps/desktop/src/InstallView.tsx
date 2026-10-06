@@ -12,7 +12,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { t } from '@meetcc/shared/i18n'
-import { Button, useToast } from '@meetcc/ui'
+import { Download, Link, Unlink } from 'lucide-react'
+import { useToast } from './toast'
+import { Button } from '@/components/ui/button'
+import { SETTING_HINT, SETTING_ROW } from '@/components/settingStyles'
 import chromeBadge from '../../../assets/badges/chrome-web-store.svg'
 import firefoxBadge from '../../../assets/badges/firefox-addon.svg'
 
@@ -37,6 +40,9 @@ const EXTENSION_ZIP_URL =
   'https://github.com/suiflex/companion/releases/latest/download/meetcc-extension.zip'
 
 /** Links leave through Rust: an anchor would navigate the WebView itself. */
+const BADGE =
+  'rounded-md leading-none transition hover:-translate-y-px hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary'
+
 const openExternal = (url: string): void => void invoke('open_external', { url })
 
 export function InstallView() {
@@ -68,48 +74,51 @@ export function InstallView() {
   }
 
   return (
-    <section className="install-settings-section">
-      <h2>{t('desktop.install.title')}</h2>
-      <p className="hint">{t('desktop.install.intro')}</p>
+    <section className="mt-6 border-t pt-[18px]">
+      <h2 className="mb-1.5 mt-0 text-[13px] font-semibold">{t('desktop.install.title')}</h2>
+      <p className={SETTING_HINT}>{t('desktop.install.intro')}</p>
 
-      {browsers === null && <p className="hint">{t('desktop.install.looking')}</p>}
-      {browsers?.length === 0 && <p className="hint">{t('desktop.install.noBrowsers')}</p>}
+      {browsers === null && <p className={SETTING_HINT}>{t('desktop.install.looking')}</p>}
+      {browsers?.length === 0 && <p className={SETTING_HINT}>{t('desktop.install.noBrowsers')}</p>}
 
       {browsers?.map((b) => (
-        <section className="setting-row" key={b.name}>
+        <section className={SETTING_ROW} key={b.name}>
           <div>
             <h2>{b.name}</h2>
-            <p className="hint">
+            <p className={SETTING_HINT}>
               {b.registered ? t('desktop.install.isRegistered') : t('desktop.install.notRegistered')}
             </p>
           </div>
           <Button
             type="button"
-            variant={b.registered ? 'default' : 'primary'}
+            variant={b.registered ? 'outline' : 'default'}
+            size="sm"
             disabled={busy !== ''}
             onClick={() => void toggle(b)}
           >
+            {b.registered ? <Unlink /> : <Link />}
             {b.registered ? t('desktop.install.remove') : t('desktop.install.register')}
           </Button>
         </section>
       ))}
 
-      <section className="setting-row">
+      <section className={SETTING_ROW}>
         <div>
           <h2>{t('desktop.install.extension')}</h2>
           {/* Registration is only half the bridge, and the half that fails
               silently: with no extension there is nothing to connect. */}
-          <p className="hint">{t('desktop.install.extensionHint')}</p>
+          <p className={SETTING_HINT}>{t('desktop.install.extensionHint')}</p>
         </div>
       </section>
-      <div className="store-badges">
-        <button type="button" className="store-badge" onClick={() => openExternal(CHROME_STORE_URL)}>
-          <img src={chromeBadge} alt="Chrome Web Store" />
+      <div className="flex flex-wrap items-center gap-2 pb-4">
+        <button type="button" className={BADGE} onClick={() => openExternal(CHROME_STORE_URL)}>
+          <img className="h-10 rounded-md" src={chromeBadge} alt="Chrome Web Store" />
         </button>
-        <button type="button" className="store-badge" onClick={() => openExternal(FIREFOX_ADDON_URL)}>
-          <img src={firefoxBadge} alt="Firefox Browser Add-on" />
+        <button type="button" className={BADGE} onClick={() => openExternal(FIREFOX_ADDON_URL)}>
+          <img className="h-10 rounded-md" src={firefoxBadge} alt="Firefox Browser Add-on" />
         </button>
-        <Button type="button" onClick={() => openExternal(EXTENSION_ZIP_URL)}>
+        <Button type="button" variant="outline" size="sm" onClick={() => openExternal(EXTENSION_ZIP_URL)}>
+          <Download />
           {t('desktop.install.downloadZip')}
         </Button>
       </div>
