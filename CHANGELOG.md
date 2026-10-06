@@ -18,6 +18,28 @@
 
 * **extension:** keep the mini-context picker visible beyond its card
 
+## [1.19.0](https://github.com/suiflex/companion/compare/v1.18.0...v1.19.0) (2026-10-06)
+
+
+### Features
+
+* **desktop:** add AI workspace, whiteboards, media and note export ([b3a8a0c](https://github.com/suiflex/companion/commit/b3a8a0c448aba126c4cded1bddd71e100077df24))
+* **desktop:** add Tiptap AI workspace and vault browsing ([1605acc](https://github.com/suiflex/companion/commit/1605accbc4f4d413295d944b7ab7f493ad53d35b))
+* **desktop:** paste, drop and insert media in notes; open links in the browser ([ba5d1ec](https://github.com/suiflex/companion/commit/ba5d1ecca37fba102bfc8ef809b1889570d6c3c5))
+* **desktop:** vault-aware AI agent in the AI panel and Write with AI ([cd34533](https://github.com/suiflex/companion/commit/cd345339678ba22a90b20729479cd3ba6b890cbd))
+* **extension:** merge meeting transcripts ([cd47200](https://github.com/suiflex/companion/commit/cd472006863c17100e5ca0d89db4fa74a282c714))
+* **extension:** merge meeting transcripts ([a51ac7f](https://github.com/suiflex/companion/commit/a51ac7ff27c74fe831058f5a051f5696d967330e))
+* **extension:** redesign UI with Tailwind v4, shadcn, and Lucide icons ([a5c49f7](https://github.com/suiflex/companion/commit/a5c49f7f5699c7de2e17b43668efe0239500442d))
+
+
+### Bug Fixes
+
+* **desktop:** keep long PDF exports from rendering blank pages ([5e5b496](https://github.com/suiflex/companion/commit/5e5b496df17000ad20d8edbea7178a7a33e25c3a))
+* **desktop:** send exports to Rust as raw bytes; pin markdown round-trip cases ([2a0314e](https://github.com/suiflex/companion/commit/2a0314ee8a3c8e7a4a07bb0777305a9a23ff4279))
+* **extension:** remove duplicate onClick attribute in Sidebar ([4ceffb9](https://github.com/suiflex/companion/commit/4ceffb91a61c2d03cf1d62d4194f2f9e9be0dddd))
+* **extension:** resolve button overflow and responsive alignment in meeting view ([d949c8e](https://github.com/suiflex/companion/commit/d949c8e4e74b7743650a25eb544ac3f17e2aec49))
+* **extension:** warn once when Zoom's participants pane will not open ([7643aec](https://github.com/suiflex/companion/commit/7643aec026075a1c809aff39d5e8910481402384))
+
 ## [1.18.0](https://github.com/suiflex/companion/compare/v1.17.0...v1.18.0) (2026-10-03)
 
 
